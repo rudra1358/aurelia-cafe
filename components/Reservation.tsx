@@ -25,7 +25,12 @@ export default function Reservation() {
   const [errors, setErrors] = useState<ReservationErrors>({});
   const [status, setStatus] = useState<Status>("idle");
   const [serverMessage, setServerMessage] = useState("");
-  const [submitted, setSubmitted] = useState<{ firstName: string; email: string } | null>(null);
+  const [submitted, setSubmitted] = useState<{
+    firstName: string;
+    email: string;
+    duplicate?: boolean;
+    reference?: string;
+  } | null>(null);
   const [minDate, setMinDate] = useState<string>();
   const inFlight = useRef(false);
   const formRef = useRef<HTMLFormElement>(null);
@@ -70,10 +75,16 @@ export default function Reservation() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ...values, company: honeypot.current?.value ?? "" }),
       });
-      const data: { ok?: boolean; error?: string; errors?: ReservationErrors } = await res.json().catch(() => ({}));
+      const data: { ok?: boolean; error?: string; errors?: ReservationErrors; duplicate?: boolean; reference?: string } =
+        await res.json().catch(() => ({}));
 
       if (res.ok && data.ok) {
-        setSubmitted({ firstName: check.data.name.split(" ")[0], email: check.data.email });
+        setSubmitted({
+          firstName: check.data.name.split(" ")[0],
+          email: check.data.email,
+          duplicate: !!data.duplicate,
+          reference: data.reference,
+        });
         setValues(empty);
         setErrors({});
         setStatus("success");
@@ -158,10 +169,18 @@ export default function Reservation() {
                 <Check size={22} strokeWidth={1.4} aria-hidden />
               </div>
               <h3>Thank you, {submitted.firstName}.</h3>
-              <p>
-                Your reservation request has been received, and a summary has been sent to{" "}
-                <strong style={{ fontWeight: 500, color: "#FAF9F6" }}>{submitted.email}</strong>.
-              </p>
+              {submitted.duplicate ? (
+                <p>
+                  We already have your request for this date and time
+                  {submitted.reference ? ` (reference ${submitted.reference})` : ""}, so there’s no need to send it again.
+                  Its summary was sent to <strong style={{ fontWeight: 500, color: "#FAF9F6" }}>{submitted.email}</strong>.
+                </p>
+              ) : (
+                <p>
+                  Your reservation request has been received, and a summary has been sent to{" "}
+                  <strong style={{ fontWeight: 500, color: "#FAF9F6" }}>{submitted.email}</strong>.
+                </p>
+              )}
               <p>Please note this is not yet a confirmed booking — our team will contact you shortly to confirm availability.</p>
               <button className="btn btn-ghost" type="button" style={{ marginTop: 40 }} onClick={() => setStatus("idle")}>
                 Make another request

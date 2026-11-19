@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { NextResponse } from "next/server";
 import { MailConfigError, assertMailConfigured, sendReservationEmails } from "@/lib/mailer";
-import { saveReservationToSheet } from "@/lib/sheets";
+import { markSheetEmailFailed, saveReservationToSheet } from "@/lib/sheets";
 import { nowInCafeTimeZone, validateReservation } from "@/lib/validation";
 
 /** Short, readable reference such as "AUR-7KQ2XD", used in the sheet and both emails. */
@@ -76,25 +76,37 @@ export async function POST(request: Request) {
 
   try {
     assertMailConfigured();
-    const now = new Date();
-    const reference = makeReference();
-
-    // Save to the owner's Google Sheet first (never throws), then email.
-    // The owner email says whether the sheet save worked.
-    const { date, time } = nowInCafeTimeZone();
-    const sheet = await saveReservationToSheet({ ...result.data, reference, submittedAt: `${date} ${time}` });
-
-    await sendReservationEmails(result.data, { reference, submittedAt: now, sheet });
   } catch (err) {
     if (err instanceof MailConfigError) {
       console.error("[reservations] Email is not configured:", err.message);
       return json({ ok: false, error: "Online reservations are temporarily unavailable." }, 503);
     }
-    console.error("[reservations] Failed to send reservation emails:", err);
+    throw err;
+  }
+
+  const now = new Date();
+  const reference = makeReference();
+
+  // 1. Save to the owner's Google Sheet first (never throws).
+  const { date, time } = nowInCafeTimeZone();
+  const sheet = await saveReservationToSheet({ ...result.data, reference, submittedAt: `${date} ${time}` });
+
+  // Same guest, same date and time, still active: don't create a second row or resend emails.
+  if (sheet.status === "duplicate") {
+    return json({ ok: true, duplicate: true, reference: sheet.existingReference }, 200);
+  }
+
+  // 2. Email the owner and the guest. The owner email says whether the sheet save worked.
+  try {
+    await sendReservationEmails(result.data, { reference, submittedAt: now, sheet: sheet.status });
+  } catch (err) {
+    console.error(`[reservations] Failed to send emails for ${reference}:`, err);
+    // The row exists but nobody was emailed — flag it so the owner sees it in the sheet.
+    if (sheet.status === "saved") await markSheetEmailFailed(reference);
     return json({ ok: false, error: "We couldn’t send your request just now, so it hasn’t reached us." }, 502);
   }
 
-  return json({ ok: true }, 200);
+  return json({ ok: true, reference }, 200);
 }
 
 export function GET() {

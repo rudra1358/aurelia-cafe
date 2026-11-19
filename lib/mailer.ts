@@ -22,6 +22,7 @@ interface MailConfig {
   user: string;
   pass: string;
   owner: string;
+  host: string;
   port: number;
 }
 
@@ -31,21 +32,23 @@ function readConfig(): MailConfig {
   const pass = process.env.GMAIL_APP_PASSWORD?.replace(/\s+/g, "");
   const owner = process.env.OWNER_EMAIL?.trim() || site.contact.email;
   const port = Number(process.env.SMTP_PORT ?? 465);
+  // Defaults to Gmail. Override only for another SMTP provider or local testing.
+  const host = process.env.SMTP_HOST?.trim() || "smtp.gmail.com";
 
   const missing = [!user && "GMAIL_USER", !pass && "GMAIL_APP_PASSWORD"].filter(Boolean);
   if (missing.length) throw new MailConfigError(`Missing environment variable(s): ${missing.join(", ")}`);
   if (port !== 465 && port !== 587) throw new MailConfigError("SMTP_PORT must be 465 or 587");
 
-  return { user: user!, pass: pass!, owner, port };
+  return { user: user!, pass: pass!, owner, host, port };
 }
 
 let cached: { key: string; transporter: Transporter } | null = null;
 
 function getTransporter(cfg: MailConfig): Transporter {
-  const key = `${cfg.user}:${cfg.port}`;
+  const key = `${cfg.user}@${cfg.host}:${cfg.port}`;
   if (cached?.key === key) return cached.transporter;
   const transporter = nodemailer.createTransport({
-    host: "smtp.gmail.com",
+    host: cfg.host,
     port: cfg.port,
     secure: cfg.port === 465, // 465 = implicit TLS; 587 = STARTTLS upgrade
     requireTLS: cfg.port === 587,

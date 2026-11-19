@@ -154,6 +154,7 @@ sequenceDiagram
     Site->>API: POST request
     API->>API: Re-validates · honeypot · rate limit
     API->>Sheet: Adds a row (reference, status "Pending")
+    Sheet-->>API: …or "duplicate" if the same guest already asked for that slot
     API->>Gmail: Email 2: "New Table Reservation"
     Gmail-->>Owner: Details + Reply / Call buttons
     API->>Gmail: Email 1: "Your Reservation Request"
@@ -166,6 +167,7 @@ sequenceDiagram
 > [!NOTE]
 > A submission is a reservation **request**, not a confirmed booking. The guest is told this on the form, on the success screen and in their email.
 > If the Google Sheet can't be reached, the emails still go out, and the owner email shows a red note so the row can be added by hand.
+> If the emails fail after the row is saved, the row is marked **Email failed** so the owner still sees it.
 
 <br>
 
@@ -195,6 +197,7 @@ npm run dev                    # → http://localhost:3000
 | `GMAIL_APP_PASSWORD` | ✅ | 16-character Google App Password (not your normal password) |
 | `OWNER_EMAIL` | ✅ | Inbox that **receives** new requests |
 | `SMTP_PORT` | — | `465` (SSL, default) or `587` (STARTTLS) |
+| `SMTP_HOST` | — | Advanced: another SMTP server instead of Gmail (see [Limits & scaling](#-limits--scaling)) |
 | `GOOGLE_SHEETS_WEBHOOK_URL` | — | Apps Script web app URL (ends in `/exec`). Leave empty to turn the sheet off |
 | `GOOGLE_SHEETS_SECRET` | — | Shared secret, which must match `SECRET` in the Apps Script |
 | `NEXT_PUBLIC_SITE_URL` | — | Public URL, used for SEO and social previews |
@@ -253,10 +256,32 @@ npm run dev                    # → http://localhost:3000
 |:--|:--|:--|:--|:--|:--|:--|:--|:--:|:--|
 | `AUR-7KQ2XD` | 2026-11-19 18:42 | Pending ▾ | … | … | … | 2026-11-28 | 19:30 | 2 | … |
 
+**What the script handles**
+- **Columns by name:** you can reorder columns or add your own (e.g. "Table", "Notes from staff"). If you rename or delete a required column, it's added back at the end.
+- **Duplicates:** the same email, date and time with an active status isn't added twice, and no second set of emails is sent.
+- **Email failures:** if the emails can't be sent, the row's status becomes **Email failed**.
+- **Simultaneous bookings:** handled one at a time with `LockService`.
+- **Yearly archive:** in the Apps Script editor, run `installYearlyArchive` once (▶ Run). After that, rows from past years move to an `Archive <year>` tab automatically every January. You can also run `archiveOldReservations` by hand at any time.
+
 > [!TIP]
 > After editing the script, go to **Deploy → Manage deployments → ✏️ → New version**. Saving alone doesn't update the live web app, and the URL stays the same.
 
 </details>
+
+<br>
+
+## ✦ Limits & scaling
+
+| Concern | Limit | What happens / what to do |
+|:--|:--|:--|
+| **Email sending** | A personal Gmail account sends ~500 recipients/day over SMTP. Each booking uses 2, so roughly **250 bookings/day**. | Past the limit Gmail rejects sends, so the guest sees an error and the row is marked **Email failed**. For more volume, use a Google Workspace account (~2,000/day) or another SMTP provider via `SMTP_HOST` (e.g. Brevo: `smtp-relay.brevo.com`, port `587`, with its SMTP login in `GMAIL_USER` / `GMAIL_APP_PASSWORD`). Send from a domain you own to avoid spam folders. |
+| **Sheet size** | 10 million cells per spreadsheet, about **1 million bookings**. | The sheet gets slow long before that (~50k+ rows), so use the yearly archive. |
+| **Spam** | n/a | A honeypot field plus a per-IP rate limit (5 requests / 10 min) block bots before they use up your email quota. Add reCAPTCHA if spam becomes a problem. |
+| **Two bookings at once** | n/a | `LockService` writes rows one at a time. |
+| **Double booking** | n/a | Each submission is a *request*. The owner confirms availability, so there's no automatic table allocation. |
+| **Personal data** | n/a | Name, email and phone are stored in the sheet and the inbox. Keep the sheet **private** (don't share it publicly), and follow India's DPDP Act. |
+
+**Ownership for real clients.** Set everything up on the **client's own** Google account: their Gmail App Password, a sheet in their Drive, and the Apps Script deployed from their account. Ask them for *editor* access so you can maintain it. That way the client owns their data and is never locked out, even if you're unavailable.
 
 <br>
 
