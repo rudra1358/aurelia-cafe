@@ -12,6 +12,10 @@ export const metadata: Metadata = {
 
 const { legal } = site;
 
+/** Name of the backup email provider, if one is configured (read at build time). */
+const fallbackHost = process.env.FALLBACK_SMTP_HOST?.trim() ?? "";
+const fallbackProvider = fallbackHost ? (/brevo|sendinblue/i.test(fallbackHost) ? "Brevo" : "A backup email delivery provider") : null;
+
 const sections: LegalSection[] = [
   {
     id: "introduction",
@@ -96,9 +100,9 @@ const sections: LegalSection[] = [
     body: (
       <>
         <p>
-          When you submit a reservation request, our website automatically sends two emails: an acknowledgement to the
-          email address you provide, and a notification containing your request details to the café’s inbox. Each request
-          is given a short reference number that appears in both emails. Our team may
+          When you submit a reservation request, our website automatically sends an acknowledgement to the email address
+          you provide, and may also send a notification containing your request details to the café’s inbox. Each request
+          is given a short reference number that appears in these emails. Our team may
           then email or call you about your reservation.
         </p>
         <p>We do not send newsletters or promotional emails. If that changes, we will ask for your consent first.</p>
@@ -139,6 +143,12 @@ const sections: LegalSection[] = [
             <strong>Google Sheets and Google Apps Script</strong> — to keep a record of reservation requests in a private
             spreadsheet owned by the café.
           </li>
+          {fallbackProvider && (
+            <li>
+              <strong>{fallbackProvider}</strong> — a backup email service, used to send reservation emails only when our
+              main email account can’t. Your request details pass through it when it’s used.
+            </li>
+          )}
           <li>
             <strong>Google Maps</strong> — to display a map of our area. When the map loads, Google may collect information
             such as your IP address under its own privacy policy.

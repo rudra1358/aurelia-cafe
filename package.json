@@ -9,6 +9,7 @@
     "start": "next start",
     "typecheck": "tsc --noEmit",
     "test:email": "node --env-file=.env.local scripts/test-email.mjs",
+    "test:email:fallback": "node --env-file=.env.local scripts/test-email.mjs --fallback",
     "test:sheet": "node --env-file=.env.local scripts/test-sheet.mjs"
   },
   "dependencies": {

@@ -1,16 +1,11 @@
 import "server-only";
-import nodemailer, { type Transporter } from "nodemailer";
+import nodemailer, { type SendMailOptions, type Transporter } from "nodemailer";
 import { site } from "@/data/site";
 import { customerEmail, ownerEmail } from "./email-templates";
 import type { Reservation } from "./validation";
 import type { SheetStatus } from "./sheets";
 
-/** Throws early if email is not configured, so nothing is written to the sheet for a request that can't be emailed. */
-export function assertMailConfigured(): void {
-  readConfig();
-}
-
-/** Thrown when the SMTP environment variables are missing. */
+/** Thrown when the SMTP environment variables are missing or invalid. */
 export class MailConfigError extends Error {
   constructor(message: string) {
     super(message);
@@ -18,85 +13,209 @@ export class MailConfigError extends Error {
   }
 }
 
-interface MailConfig {
-  user: string;
-  pass: string;
-  owner: string;
+type Label = "primary" | "fallback";
+
+interface SmtpAccount {
+  label: Label;
   host: string;
   port: number;
+  user: string;
+  pass: string;
+  /** Address the email is sent from (must be allowed by this provider). */
+  fromAddress: string;
+}
+
+interface MailConfig {
+  primary: SmtpAccount;
+  fallback: SmtpAccount | null;
+  owner: string;
+  /** "each" = email the owner for every booking; "off" = only when the booking couldn't be saved to the sheet. */
+  ownerNotify: "each" | "off";
+}
+
+const ALLOWED_PORTS = [465, 587, 2525];
+
+function parsePort(value: string | undefined, fallback: number, name: string): number {
+  const port = Number(value?.trim() || fallback);
+  if (!ALLOWED_PORTS.includes(port)) throw new MailConfigError(`${name} must be one of ${ALLOWED_PORTS.join(", ")}`);
+  return port;
 }
 
 function readConfig(): MailConfig {
   const user = process.env.GMAIL_USER?.trim();
   // Google shows App Passwords as "abcd efgh ijkl mnop" — spaces are not part of it.
   const pass = process.env.GMAIL_APP_PASSWORD?.replace(/\s+/g, "");
-  const owner = process.env.OWNER_EMAIL?.trim() || site.contact.email;
-  const port = Number(process.env.SMTP_PORT ?? 465);
-  // Defaults to Gmail. Override only for another SMTP provider or local testing.
-  const host = process.env.SMTP_HOST?.trim() || "smtp.gmail.com";
-
   const missing = [!user && "GMAIL_USER", !pass && "GMAIL_APP_PASSWORD"].filter(Boolean);
   if (missing.length) throw new MailConfigError(`Missing environment variable(s): ${missing.join(", ")}`);
-  if (port !== 465 && port !== 587) throw new MailConfigError("SMTP_PORT must be 465 or 587");
 
-  return { user: user!, pass: pass!, owner, host, port };
+  const primary: SmtpAccount = {
+    label: "primary",
+    // Defaults to Gmail. Override only for another SMTP provider or local testing.
+    host: process.env.SMTP_HOST?.trim() || "smtp.gmail.com",
+    port: parsePort(process.env.SMTP_PORT, 465, "SMTP_PORT"),
+    user: user!,
+    pass: pass!,
+    fromAddress: user!,
+  };
+
+  // Optional backup provider (e.g. Brevo). All four values are needed to enable it.
+  let fallback: SmtpAccount | null = null;
+  const fHost = process.env.FALLBACK_SMTP_HOST?.trim();
+  if (fHost) {
+    const fUser = process.env.FALLBACK_SMTP_USER?.trim();
+    const fPass = process.env.FALLBACK_SMTP_PASS?.trim();
+    const fFrom = process.env.FALLBACK_FROM_EMAIL?.trim();
+    if (fUser && fPass && fFrom) {
+      fallback = {
+        label: "fallback",
+        host: fHost,
+        port: parsePort(process.env.FALLBACK_SMTP_PORT, 587, "FALLBACK_SMTP_PORT"),
+        user: fUser,
+        pass: fPass,
+        fromAddress: fFrom,
+      };
+    } else {
+      console.error(
+        "[mail] FALLBACK_SMTP_HOST is set but FALLBACK_SMTP_USER, FALLBACK_SMTP_PASS or FALLBACK_FROM_EMAIL is missing — backup disabled.",
+      );
+    }
+  }
+
+  const notify = process.env.OWNER_NOTIFY?.trim().toLowerCase();
+  return {
+    primary,
+    fallback,
+    owner: process.env.OWNER_EMAIL?.trim() || site.contact.email,
+    ownerNotify: notify === "off" ? "off" : "each",
+  };
 }
 
-let cached: { key: string; transporter: Transporter } | null = null;
+/** Throws early if email is not configured, so nothing is written to the sheet for a request that can't be emailed. */
+export function assertMailConfigured(): void {
+  readConfig();
+}
 
-function getTransporter(cfg: MailConfig): Transporter {
-  const key = `${cfg.user}@${cfg.host}:${cfg.port}`;
-  if (cached?.key === key) return cached.transporter;
-  const transporter = nodemailer.createTransport({
-    host: cfg.host,
-    port: cfg.port,
-    secure: cfg.port === 465, // 465 = implicit TLS; 587 = STARTTLS upgrade
-    requireTLS: cfg.port === 587,
-    auth: { user: cfg.user, pass: cfg.pass },
-    connectionTimeout: 15_000,
-    greetingTimeout: 10_000,
-    socketTimeout: 20_000,
-  });
-  cached = { key, transporter };
-  return transporter;
+const transporters = new Map<string, Transporter>();
+
+function getTransporter(a: SmtpAccount): Transporter {
+  const key = `${a.user}@${a.host}:${a.port}`;
+  let t = transporters.get(key);
+  if (!t) {
+    t = nodemailer.createTransport({
+      host: a.host,
+      port: a.port,
+      secure: a.port === 465, // 465 = implicit TLS
+      requireTLS: a.port === 587, // 587 = must upgrade with STARTTLS; 2525 = upgrade if offered
+      auth: { user: a.user, pass: a.pass },
+      connectionTimeout: 15_000,
+      greetingTimeout: 10_000,
+      socketTimeout: 20_000,
+    });
+    transporters.set(key, t);
+  }
+  return t;
 }
 
 /**
- * Sends both reservation emails. Resolves only when Gmail has accepted BOTH messages;
- * throws otherwise so the API can report failure to the visitor.
- *
- * The owner notification is sent first — it is the one the café must not miss.
+ * When the primary account reports it is over its sending limit, skip it for a while
+ * and go straight to the backup. In memory, so per server instance — best effort.
+ */
+const PRIMARY_PAUSE_MS = 60 * 60 * 1000;
+let primaryPausedUntil = 0;
+
+function isQuotaError(err: unknown): boolean {
+  const e = err as { responseCode?: number; response?: string; message?: string };
+  const text = `${e?.response ?? ""} ${e?.message ?? ""}`;
+  return (
+    /5\.4\.5|4\.7\.0|daily (user )?sending (quota|limit)|sending limit|quota exceeded|rate limit|too many/i.test(text) ||
+    e?.responseCode === 421 ||
+    e?.responseCode === 454
+  );
+}
+
+/**
+ * Sends one message through the primary account, retrying through the backup if the
+ * primary fails. Returns which account delivered it; throws if every option failed.
+ */
+async function deliver(cfg: MailConfig, message: Omit<SendMailOptions, "from">, what: string): Promise<Label> {
+  const accounts: SmtpAccount[] = [];
+  const primaryPaused = cfg.fallback !== null && Date.now() < primaryPausedUntil;
+  if (!primaryPaused) accounts.push(cfg.primary);
+  if (cfg.fallback) accounts.push(cfg.fallback);
+
+  let lastError: unknown;
+  for (const account of accounts) {
+    try {
+      await getTransporter(account).sendMail({ ...message, from: { name: site.name, address: account.fromAddress } });
+      if (account.label === "fallback") console.warn(`[mail] ${what} sent via the backup provider.`);
+      return account.label;
+    } catch (err) {
+      lastError = err;
+      if (account.label === "primary" && isQuotaError(err)) {
+        primaryPausedUntil = Date.now() + PRIMARY_PAUSE_MS;
+        console.error(`[mail] Primary account hit a sending limit; using the backup for the next hour.`);
+      }
+      console.error(`[mail] ${what} failed via ${account.label}:`, (err as Error)?.message ?? err);
+    }
+  }
+  throw lastError ?? new Error("No email account available");
+}
+
+export interface SendResult {
+  guest: Label;
+  /** null when the owner email was skipped (OWNER_NOTIFY=off) or could not be sent but the booking is in the sheet. */
+  owner: Label | null;
+}
+
+/**
+ * Sends the reservation emails.
+ * - The guest email is required: if it can't be sent through any account, this throws
+ *   so the visitor sees an error.
+ * - The owner email is sent for every booking (OWNER_NOTIFY=each, default), or — with
+ *   OWNER_NOTIFY=off — only when the booking could NOT be saved to the Google Sheet.
+ *   If it fails while the booking is safely in the sheet, the guest still gets success.
  */
 export async function sendReservationEmails(
   r: Reservation,
   meta: { reference: string; submittedAt: Date; sheet: SheetStatus },
-): Promise<void> {
+): Promise<SendResult> {
   const cfg = readConfig();
-  const transporter = getTransporter(cfg);
-  const from = { name: site.name, address: cfg.user };
+  const inSheet = meta.sheet === "saved";
+  const ownerRequired = !inSheet; // without the sheet, the owner email is the only record
+  const sendOwner = cfg.ownerNotify === "each" || ownerRequired;
 
-  const owner = ownerEmail(r, meta.submittedAt, meta.reference, meta.sheet);
-  await transporter.sendMail({
-    from,
-    to: cfg.owner,
-    replyTo: { name: r.name, address: r.email },
-    subject: owner.subject,
-    text: owner.text,
-    html: owner.html,
-  });
+  let owner: Label | null = null;
+  if (sendOwner) {
+    const o = ownerEmail(r, meta.submittedAt, meta.reference, meta.sheet);
+    try {
+      owner = await deliver(
+        cfg,
+        { to: cfg.owner, replyTo: { name: r.name, address: r.email }, subject: o.subject, text: o.text, html: o.html },
+        `Owner email for ${meta.reference}`,
+      );
+    } catch (err) {
+      if (ownerRequired) throw err;
+      console.error(`[mail] Owner email for ${meta.reference} not sent; the booking is in the Google Sheet.`);
+    }
+  }
 
-  const customer = customerEmail(r, meta.reference);
-  await transporter.sendMail({
-    from,
-    to: { name: r.name, address: r.email },
-    replyTo: { name: site.name, address: cfg.owner },
-    subject: customer.subject,
-    text: customer.text,
-    html: customer.html,
-  });
+  const c = customerEmail(r, meta.reference);
+  const guest = await deliver(
+    cfg,
+    {
+      to: { name: r.name, address: r.email },
+      replyTo: { name: site.name, address: cfg.owner },
+      subject: c.subject,
+      text: c.text,
+      html: c.html,
+    },
+    `Guest email for ${meta.reference}`,
+  );
+
+  return { guest, owner };
 }
 
-/** Checks the SMTP login without sending anything. Used by scripts/test-email.mjs-style checks. */
+/** Checks the primary SMTP login without sending anything. */
 export async function verifySmtp(): Promise<void> {
-  await getTransporter(readConfig()).verify();
+  await getTransporter(readConfig().primary).verify();
 }

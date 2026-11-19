@@ -185,6 +185,7 @@ npm run dev                    # → http://localhost:3000
 | `npm run build` · `npm start` | Production build · serve it |
 | `npm run typecheck` | TypeScript check |
 | `npm run test:email` | Log in to Gmail SMTP and send one test email to yourself |
+| `npm run test:email:fallback` | Log in to the backup provider and send one test email to `OWNER_EMAIL` |
 | `npm run test:sheet` | Add one test row to the Google Sheet |
 
 > Requires **Node.js 20.9+**.
@@ -197,7 +198,10 @@ npm run dev                    # → http://localhost:3000
 | `GMAIL_APP_PASSWORD` | ✅ | 16-character Google App Password (not your normal password) |
 | `OWNER_EMAIL` | ✅ | Inbox that **receives** new requests |
 | `SMTP_PORT` | — | `465` (SSL, default) or `587` (STARTTLS) |
-| `SMTP_HOST` | — | Advanced: another SMTP server instead of Gmail (see [Limits & scaling](#-limits--scaling)) |
+| `SMTP_HOST` | — | Advanced: another SMTP server instead of Gmail |
+| `OWNER_NOTIFY` | — | `each` (default) emails the owner for every booking. `off` relies on the Google Sheet and still emails the owner if a booking can't be saved there |
+| `FALLBACK_SMTP_HOST` · `_PORT` · `_USER` · `_PASS` | — | Optional backup provider (e.g. Brevo), used when Gmail fails or hits its daily limit |
+| `FALLBACK_FROM_EMAIL` | — | Sender address verified with the backup provider |
 | `GOOGLE_SHEETS_WEBHOOK_URL` | — | Apps Script web app URL (ends in `/exec`). Leave empty to turn the sheet off |
 | `GOOGLE_SHEETS_SECRET` | — | Shared secret, which must match `SECRET` in the Apps Script |
 | `NEXT_PUBLIC_SITE_URL` | — | Public URL, used for SEO and social previews |
@@ -228,7 +232,7 @@ npm run dev                    # → http://localhost:3000
 **Troubleshooting**
 - *"Invalid login" / 535:* you used your normal password or copied the App Password wrong. Create a new one.
 - *App Passwords page unavailable:* 2-Step Verification is off, or a work/school admin has disabled it.
-- *Sending limits:* a personal Gmail account can send about 500 emails a day. Each reservation uses 2.
+- *Sending limits:* a personal Gmail account can send about 500 emails a day. Each reservation uses 2. See [Handling busy days](#handling-busy-days).
 
 </details>
 
@@ -274,12 +278,49 @@ npm run dev                    # → http://localhost:3000
 
 | Concern | Limit | What happens / what to do |
 |:--|:--|:--|
-| **Email sending** | A personal Gmail account sends ~500 recipients/day over SMTP. Each booking uses 2, so roughly **250 bookings/day**. | Past the limit Gmail rejects sends, so the guest sees an error and the row is marked **Email failed**. For more volume, use a Google Workspace account (~2,000/day) or another SMTP provider via `SMTP_HOST` (e.g. Brevo: `smtp-relay.brevo.com`, port `587`, with its SMTP login in `GMAIL_USER` / `GMAIL_APP_PASSWORD`). Send from a domain you own to avoid spam folders. |
+| **Email sending** | A personal Gmail account sends ~500 recipients a day over SMTP (a rolling 24 hours). | See [Handling busy days](#handling-busy-days) below. |
 | **Sheet size** | 10 million cells per spreadsheet, about **1 million bookings**. | The sheet gets slow long before that (~50k+ rows), so use the yearly archive. |
 | **Spam** | n/a | A honeypot field plus a per-IP rate limit (5 requests / 10 min) block bots before they use up your email quota. Add reCAPTCHA if spam becomes a problem. |
 | **Two bookings at once** | n/a | `LockService` writes rows one at a time. |
 | **Double booking** | n/a | Each submission is a *request*. The owner confirms availability, so there's no automatic table allocation. |
 | **Personal data** | n/a | Name, email and phone are stored in the sheet and the inbox. Keep the sheet **private** (don't share it publicly), and follow India's DPDP Act. |
+
+### Handling busy days
+
+Two settings raise the daily ceiling. They can be combined:
+
+| Setup | Emails per booking | Bookings per day (approx.) |
+|:--|:--:|:--|
+| Gmail only (default) | 2 | ~250 |
+| Gmail + `OWNER_NOTIFY=off` | 1 | ~500 |
+| Gmail + Brevo free backup | 2 | ~400 (≈250 Gmail + ≈150 Brevo) |
+| Gmail + Brevo free backup + `OWNER_NOTIFY=off` | 1 | ~800 |
+
+**How the backup works:** every email goes through Gmail first. If Gmail rejects it, the same email is retried through the backup. If Gmail says it's over its daily limit, the server skips Gmail and sends straight through the backup for the next hour. The guest only sees an error if **both** providers fail. Then the row is marked **Email failed**.
+
+**With `OWNER_NOTIFY=off`:** you rely on the Google Sheet instead of an email per booking. You still get an email for any booking that couldn't be saved to the sheet, so nothing is missed. If the owner email fails but the booking is in the sheet, the guest still gets their confirmation.
+
+<details>
+<summary><b>Set up Brevo as the backup (free, about 300 emails a day)</b></summary>
+
+<br>
+
+1. Create a free account at <https://www.brevo.com> and complete their account check.
+2. **Senders, Domains & Dedicated IPs → Senders:** add and verify the address you'll send from. Ideally use one on the café's own domain (e.g. `bookings@cafename.com`, with Brevo's DNS records added). A `@gmail.com` sender through Brevo often lands in spam.
+3. **SMTP & API → SMTP:** copy the SMTP login and create an **SMTP key**.
+4. Add these to `.env.local`, and to Vercel → Settings → Environment Variables:
+   ```ini
+   FALLBACK_SMTP_HOST=smtp-relay.brevo.com
+   FALLBACK_SMTP_PORT=587
+   FALLBACK_SMTP_USER=your-brevo-smtp-login
+   FALLBACK_SMTP_PASS=your-brevo-smtp-key
+   FALLBACK_FROM_EMAIL=bookings@cafename.com
+   ```
+5. Run `npm run test:email:fallback`, then redeploy on Vercel.
+
+Brevo's free plan adds a small Brevo logo to emails, and their limits can change. Check their current plan details.
+
+</details>
 
 **Ownership for real clients.** Set everything up on the **client's own** Google account: their Gmail App Password, a sheet in their Drive, and the Apps Script deployed from their account. Ask them for *editor* access so you can maintain it. That way the client owns their data and is never locked out, even if you're unavailable.
 
