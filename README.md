@@ -267,6 +267,7 @@ Everything business-specific lives in **two files**, so the site can be rebrande
 | What | Where |
 |:--|:--|
 | Menu items, prices, bestsellers, new sections (e.g. food) | [`data/menu.ts`](data/menu.ts) |
+| Concept banner (turn off for a real café) | [`data/site.ts`](data/site.ts) → `demo.enabled` |
 | Name, contact details, address, map coordinates | [`data/site.ts`](data/site.ts) → `contact`, `location` |
 | Opening hours and last booking time | [`data/site.ts`](data/site.ts) → `hours` |
 | Guest limit, booking window | [`data/site.ts`](data/site.ts) → `reservations` |

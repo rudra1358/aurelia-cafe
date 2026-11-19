@@ -21,6 +21,16 @@ export const site = {
   locale: "en_IN",
   timeZone: "Asia/Kolkata",
 
+  /**
+   * Portfolio / concept mode: shows a thin banner explaining the site is a concept with a working demo form.
+   * Set `enabled: false` when the site is used for a real café.
+   */
+  demo: {
+    enabled: true,
+    author: "Rudra Patel",
+    authorUrl: "https://github.com/rudra1358",
+  },
+
   contact: {
     email: "rudra300806@gmail.com",
     phoneDisplay: "+91 8585858585",

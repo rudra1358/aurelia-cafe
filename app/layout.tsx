@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { Cormorant_Garamond, DM_Sans } from "next/font/google";
 import { site } from "@/data/site";
+import DemoBanner from "@/components/DemoBanner";
 import "./globals.css";
 
 const cormorant = Cormorant_Garamond({
@@ -54,8 +55,13 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en-IN" className={`${cormorant.variable} ${dmSans.variable}`} data-scroll-behavior="smooth">
+    <html
+      lang="en-IN"
+      className={`${cormorant.variable} ${dmSans.variable}${site.demo.enabled ? " has-demo" : ""}`}
+      data-scroll-behavior="smooth"
+    >
       <body>
+        <DemoBanner />
         <a href="#main" className="sr-only focus:not-sr-only focus:fixed focus:top-3 focus:left-3 focus:z-[60] focus:bg-cream focus:px-4 focus:py-3 focus:text-sm">
           Skip to content
         </a>
