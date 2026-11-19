@@ -11,13 +11,27 @@ export interface Coordinates {
   lng: number;
 }
 
+/**
+ * Public URL used for SEO, Open Graph and the sitemap.
+ * Uses NEXT_PUBLIC_SITE_URL when it is a real address; on Vercel it falls back to the
+ * project's production domain (VERCEL_PROJECT_PRODUCTION_URL, set automatically by Vercel).
+ */
+function resolveSiteUrl(): string {
+  const configured = process.env.NEXT_PUBLIC_SITE_URL?.trim().replace(/\/+$/, "");
+  const isLocal = !configured || /localhost|127\.0\.0\.1/.test(configured);
+  const vercel = process.env.VERCEL_PROJECT_PRODUCTION_URL?.trim();
+  if (!isLocal) return configured!;
+  if (vercel) return `https://${vercel}`;
+  return configured || "http://localhost:3000";
+}
+
 export const site = {
   name: "Aurelia",
   wordmark: "AURELIA",
   tagline: "Good coffee. Good food. Good moments.",
   description:
     "Aurelia is a café in Sindhu Bhavan, Ahmedabad — thoughtfully crafted coffee, delightful flavors, and moments worth slowing down for. Request a table online.",
-  url: process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000",
+  url: resolveSiteUrl(),
   locale: "en_IN",
   timeZone: "Asia/Kolkata",
 
