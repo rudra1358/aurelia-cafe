@@ -6,7 +6,9 @@ import Script from "next/script";
 import { Check, ChevronDown, CircleAlert, Clock, Info, LoaderCircle } from "lucide-react";
 import cheers from "@/public/images/cheers.jpg";
 import { site, telHref } from "@/data/site";
+import { upcomingEvents } from "@/data/events";
 import { formatDate, formatTime } from "@/lib/format";
+import { useT } from "./Language";
 import {
   addDays,
   closedDateMessage,
@@ -36,9 +38,23 @@ declare global {
   }
 }
 
-const empty: ReservationInput = { name: "", email: "", phone: "", date: "", time: "", guests: "", notes: "" };
+/** Show the "updates on WhatsApp" opt-in. Set once WhatsApp is set up (README → WhatsApp setup). */
+const WHATSAPP_OPT_IN = process.env.NEXT_PUBLIC_WHATSAPP_OPT_IN?.trim() === "true";
+
+const empty: ReservationInput = {
+  event: "",
+  name: "",
+  email: "",
+  phone: "",
+  date: "",
+  time: "",
+  guests: "",
+  notes: "",
+  whatsapp: "",
+};
 
 export default function Reservation() {
+  const t = useT();
   const [values, setValues] = useState<ReservationInput>(empty);
   const [errors, setErrors] = useState<ReservationErrors>({});
   const [status, setStatus] = useState<Status>("idle");
@@ -78,6 +94,24 @@ export default function Reservation() {
       document.removeEventListener("visibilitychange", onVisible);
     };
   }, []);
+
+  // Events open for booking (computed on the client, like minDate).
+  const events = minDate ? upcomingEvents(minDate) : [];
+  const selectedEvent = events.find((e) => e.id === values.event) ?? null;
+
+  // "Book a seat" links arrive as /?event=<id>#reservation: pre-select that event.
+  useEffect(() => {
+    const id = new URLSearchParams(window.location.search).get("event");
+    if (!id) return;
+    const ev = upcomingEvents(nowInCafeTimeZone().date).find((e) => e.id === id);
+    if (ev) setValues((v) => ({ ...v, event: ev.id, date: ev.date, time: ev.time }));
+  }, []);
+
+  const chooseEvent = (id: string) => {
+    const ev = events.find((e) => e.id === id);
+    setValues((v) => ({ ...v, event: id, ...(ev ? { date: ev.date, time: ev.time } : { date: "", time: "" }) }));
+    setErrors((er) => ({ ...er, event: undefined, date: undefined, time: undefined }));
+  };
   useEffect(() => {
     if (status === "success") successRef.current?.focus();
   }, [status]);
@@ -244,11 +278,11 @@ export default function Reservation() {
       )}
       <div className="wrap g12">
         <div className="res-l">
-          <p className="eyebrow reveal">Reservations</p>
+          <p className="eyebrow reveal">{t("res.eyebrow")}</p>
           <h2 className="h2 reveal" id="res-title" style={{ marginTop: 22 }}>
-            Your table is waiting.
+            {t("res.title")}
           </h2>
-          <p className="res-sub reveal">Make a reservation and let us take care of the rest.</p>
+          <p className="res-sub reveal">{t("res.sub")}</p>
           <div className="res-img">
             <figure className="frame unveil">
               <Image
@@ -262,16 +296,13 @@ export default function Reservation() {
           </div>
           <div className="res-note">
             <Info size={18} strokeWidth={1.4} aria-hidden />
-            <p style={{ margin: 0 }}>
-              This form sends a reservation <em>request</em>. Your table is confirmed only once our team contacts you to
-              confirm availability.
-            </p>
+            <p style={{ margin: 0 }}>{t("res.note")}</p>
           </div>
           {(site.legal.cancellationPolicy || site.legal.lateArrivalPolicy) && (
             <div className="res-note" style={{ marginTop: 16 }}>
               <Clock size={18} strokeWidth={1.4} aria-hidden />
               <p style={{ margin: 0 }}>
-                Open {site.hours.display}. {site.legal.cancellationPolicy} {site.legal.lateArrivalPolicy}
+                {t("res.open", { hours: site.hours.display })} {site.legal.cancellationPolicy} {site.legal.lateArrivalPolicy}
               </p>
             </div>
           )}
@@ -283,7 +314,7 @@ export default function Reservation() {
               <div className="ring">
                 <Check size={22} strokeWidth={1.4} aria-hidden />
               </div>
-              <h3>Thank you, {submitted.firstName}.</h3>
+              <h3>{t("res.thanks", { name: submitted.firstName })}</h3>
               {submitted.duplicate ? (
                 <p>
                   We already have your request
@@ -302,13 +333,13 @@ export default function Reservation() {
                 </p>
               ) : (
                 <p>
-                  Your reservation request has been received, and a summary has been sent to{" "}
-                  <strong style={{ fontWeight: 500, color: "#FAF9F6" }}>{submitted.email}</strong>.
+                  {t("res.received")} <strong style={{ fontWeight: 500, color: "#FAF9F6" }}>{submitted.email}</strong>
+                  {submitted.reference ? ` (${submitted.reference})` : ""}.
                 </p>
               )}
-              <p>Please note this is not yet a confirmed booking — our team will contact you shortly to confirm availability.</p>
+              <p>{t("res.pending")}</p>
               <button className="btn btn-ghost" type="button" style={{ marginTop: 40 }} onClick={() => setStatus("idle")}>
-                Make another request
+                {t("res.another")}
               </button>
             </div>
           ) : (
@@ -320,31 +351,74 @@ export default function Reservation() {
               </div>
 
               <fieldset disabled={loading}>
-                <legend className="eyebrow">Your details</legend>
+                <legend className="eyebrow">{t("res.details")}</legend>
                 <div className="fgrid">
                   <div className={fieldClass("name", "span2")}>
-                    <label htmlFor="r-name">Full name</label>
-                    <input className="inp" type="text" autoComplete="name" placeholder="Your full name" required maxLength={100} {...a11y("name")} />
+                    <label htmlFor="r-name">{t("res.name")}</label>
+                    <input className="inp" type="text" autoComplete="name" placeholder={t("res.namePh")} required maxLength={100} {...a11y("name")} />
                     {err("name")}
                   </div>
                   <div className={fieldClass("email")}>
-                    <label htmlFor="r-email">Email address</label>
+                    <label htmlFor="r-email">{t("res.email")}</label>
                     <input className="inp" type="email" autoComplete="email" inputMode="email" placeholder="you@example.com" required maxLength={254} {...a11y("email")} />
                     {err("email")}
                   </div>
                   <div className={fieldClass("phone")}>
-                    <label htmlFor="r-phone">Phone number</label>
+                    <label htmlFor="r-phone">{t("res.phone")}</label>
                     <input className="inp" type="tel" autoComplete="tel" inputMode="tel" placeholder="+91 98765 43210" required maxLength={20} {...a11y("phone")} />
                     {err("phone")}
                   </div>
+                  {WHATSAPP_OPT_IN && (
+                    <div className="fld span2 fcheck">
+                      <input
+                        id="r-whatsapp"
+                        name="whatsapp"
+                        type="checkbox"
+                        checked={values.whatsapp === "yes"}
+                        onChange={(e) => setValues((v) => ({ ...v, whatsapp: e.target.checked ? "yes" : "" }))}
+                      />
+                      <label htmlFor="r-whatsapp">{t("res.whatsapp")}</label>
+                    </div>
+                  )}
                 </div>
               </fieldset>
 
               <fieldset disabled={loading} style={{ marginTop: 56 }}>
-                <legend className="eyebrow">Your visit</legend>
+                <legend className="eyebrow">{t("res.visit")}</legend>
                 <div className="fgrid">
+                  {events.length > 0 && (
+                    <div className={fieldClass("event", "span2")}>
+                      <label htmlFor="r-event">{t("res.event")}</label>
+                      <select
+                        className="inp"
+                        id="r-event"
+                        name="event"
+                        value={values.event}
+                        onChange={(e) => chooseEvent(e.target.value)}
+                        aria-invalid={errors.event ? true : undefined}
+                        aria-describedby={errors.event ? "r-event-err" : selectedEvent ? "r-event-hint" : undefined}
+                      >
+                        <option value="">{t("res.eventNone")}</option>
+                        {events.map((ev) => (
+                          <option key={ev.id} value={ev.id}>
+                            {ev.title} — {formatDate(ev.date)}, {formatTime(ev.time)}
+                          </option>
+                        ))}
+                      </select>
+                      <ChevronDown className="chev" size={14} strokeWidth={1.5} aria-hidden />
+                      {err("event")}
+                      {selectedEvent && (
+                        <p className="fhint" id="r-event-hint">
+                          {t("res.eventSet", { date: formatDate(selectedEvent.date), time: formatTime(selectedEvent.time) })}
+                          {selectedEvent.price ? ` ${selectedEvent.price}.` : ""}
+                        </p>
+                      )}
+                    </div>
+                  )}
+                  {!selectedEvent && (
+                  <>
                   <div className={fieldClass("date")}>
-                    <label htmlFor="r-date">Reservation date</label>
+                    <label htmlFor="r-date">{t("res.date")}</label>
                     <input
                       className="inp"
                       type="date"
@@ -362,7 +436,7 @@ export default function Reservation() {
                     )}
                   </div>
                   <div className={fieldClass("time")}>
-                    <label htmlFor="r-time">Preferred time</label>
+                    <label htmlFor="r-time">{t("res.time")}</label>
                     <input
                       className="inp"
                       type="time"
@@ -374,23 +448,29 @@ export default function Reservation() {
                     />
                     {err("time")}
                     <p className="fhint" id="r-time-hint">
-                      {formatTime(site.hours.open)} – {formatTime(site.hours.lastReservation)}, every {slotMinutes} minutes
+                      {t("res.timeHint", {
+                        from: formatTime(site.hours.open),
+                        to: formatTime(site.hours.lastReservation),
+                        step: slotMinutes,
+                      })}
                     </p>
                   </div>
+                  </>
+                  )}
                   <div className={fieldClass("guests", "span2")}>
-                    <label htmlFor="r-guests">Number of guests</label>
+                    <label htmlFor="r-guests">{t("res.guests")}</label>
                     <select className="inp" required {...a11y("guests", "r-guests-hint")}>
-                      <option value="">Select guests</option>
+                      <option value="">{t("res.selectGuests")}</option>
                       {Array.from({ length: maxGuests }, (_, i) => i + 1).map((n) => (
                         <option key={n} value={n}>
-                          {n} {n === 1 ? "guest" : "guests"}
+                          {n} {n === 1 ? t("res.guest") : t("res.guestsWord")}
                         </option>
                       ))}
                     </select>
                     <ChevronDown className="chev" size={14} strokeWidth={1.5} aria-hidden />
                     {err("guests")}
                     <p className="fhint" id="r-guests-hint">
-                      For groups larger than {maxGuests}, please call us on{" "}
+                      {t("res.groups", { max: maxGuests })}{" "}
                       <a className="inline" href={telHref}>
                         {site.contact.phoneDisplay}
                       </a>
@@ -399,13 +479,13 @@ export default function Reservation() {
                   </div>
                   <div className={fieldClass("notes", "span2")}>
                     <label htmlFor="r-notes">
-                      Special requests <span className="opt">(optional)</span>
+                      {t("res.notes")} <span className="opt">{t("res.optional")}</span>
                     </label>
                     <textarea
                       className="inp"
                       rows={3}
                       maxLength={maxNotesLength}
-                      placeholder="Celebrations, seating preferences, dietary notes…"
+                      placeholder={t("res.notesPh")}
                       {...a11y("notes")}
                     />
                     {err("notes")}
@@ -427,19 +507,19 @@ export default function Reservation() {
 
               <div className="fbar">
                 <p>
-                  By submitting, you agree to our{" "}
+                  {t("res.agree")}{" "}
                   <a className="inline" href="/privacy-policy">
-                    Privacy Policy
+                    {t("res.privacy")}
                   </a>{" "}
-                  and{" "}
+                  {t("res.and")}{" "}
                   <a className="inline" href="/terms-and-conditions">
-                    Terms
+                    {t("res.terms")}
                   </a>
                   .
                 </p>
                 <button className="btn btn-sub" type="submit" disabled={loading}>
                   {loading && <LoaderCircle className="spin" size={15} strokeWidth={1.6} aria-hidden />}
-                  {loading ? "Sending request…" : "Request reservation"}
+                  {loading ? t("res.sending") : t("res.submit")}
                 </button>
               </div>
               <p className="sr-only-live" aria-live="polite">

@@ -3,9 +3,10 @@
  * The server always re-validates — client checks are only for convenience.
  */
 import { site } from "@/data/site";
+import { findUpcomingEvent } from "@/data/events";
 import { formatTime } from "./format";
 
-export const reservationFields = ["name", "email", "phone", "date", "time", "guests", "notes"] as const;
+export const reservationFields = ["event", "name", "email", "phone", "date", "time", "guests", "notes", "whatsapp"] as const;
 export type ReservationField = (typeof reservationFields)[number];
 
 export type ReservationInput = Record<ReservationField, string>;
@@ -19,6 +20,10 @@ export interface Reservation {
   time: string; // HH:MM (24h)
   guests: number;
   notes: string;
+  /** The guest agreed to booking updates on WhatsApp. */
+  whatsapp: boolean;
+  /** Title of the event this booking is for, or "" for a normal table. */
+  event: string;
 }
 
 export type ValidationResult =
@@ -119,8 +124,16 @@ export function validateReservation(
   if (!phoneRaw) errors.phone = "Please enter your phone number.";
   else if (!PHONE_RE.test(phone)) errors.phone = "Please enter a valid phone number.";
 
-  const date = str(src.date).trim();
-  if (!date) errors.date = "Please choose a date.";
+  // Booking a seat at an event: the event sets the date and time.
+  const eventId = str(src.event).trim();
+  const event = eventId ? findUpcomingEvent(eventId, now.date) : null;
+  if (eventId && !event) errors.event = "This event is no longer available. Please choose another, or book a normal table.";
+
+  const date = event ? event.date : str(src.date).trim();
+  if (event) {
+    // Already checked: upcoming. Only reject an event that has started today.
+    if (event.date === now.date && event.time <= now.time) errors.event = "This event has already started.";
+  } else if (!date) errors.date = "Please choose a date.";
   else if (!DATE_RE.test(date) || Number.isNaN(Date.parse(`${date}T00:00:00Z`)))
     errors.date = "Please choose a valid date.";
   else if (date < now.date) errors.date = "Please choose today or a future date.";
@@ -130,8 +143,10 @@ export function validateReservation(
     if (closed) errors.date = closed;
   }
 
-  const time = str(src.time).trim();
-  if (!time) errors.time = "Please choose a preferred time.";
+  const time = event ? event.time : str(src.time).trim();
+  if (event) {
+    // The event's own time applies.
+  } else if (!time) errors.time = "Please choose a preferred time.";
   else if (!TIME_RE.test(time)) errors.time = "Please choose a valid time.";
   else if (time < site.hours.open || time > site.hours.lastReservation)
     errors.time = `Please choose a time between ${formatTime(site.hours.open)} and ${formatTime(site.hours.lastReservation)}.`;
@@ -147,6 +162,11 @@ export function validateReservation(
   const notes = str(src.notes).trim();
   if (notes.length > maxNotesLength) errors.notes = `Please keep special requests under ${maxNotesLength} characters.`;
 
+  const whatsapp = ["yes", "true", "on", "1"].includes(str(src.whatsapp).trim().toLowerCase()) || src.whatsapp === true;
+
   if (Object.keys(errors).length > 0) return { ok: false, errors };
-  return { ok: true, data: { name, email, phone: phoneRaw.replace(/\s+/g, " "), date, time, guests, notes } };
+  return {
+    ok: true,
+    data: { name, email, phone: phoneRaw.replace(/\s+/g, " "), date, time, guests, notes, whatsapp, event: event?.title ?? "" },
+  };
 }

@@ -15,11 +15,30 @@
  *    guests of active rows on the same date.
  *  - Lets the website mark a row "Guest not emailed" if the guest's confirmation email failed.
  *  - Two requests at the same moment are serialised with LockService.
+ *  - Lets the guest's "Manage booking" page look up, change or cancel their booking.
+ *  - Emails the guest when you change Status to Confirmed, Declined or Cancelled (onStatusEdit),
+ *    and sends a reminder the day before a Confirmed booking (sendReminders) — both through the
+ *    website, so emails, calendar invites and WhatsApp all come from one place.
+ *    Run installTriggers() ONCE from the editor to switch these on.
  *  - archiveOldReservations(): moves past years' rows into "Archive <year>" tabs.
  */
 
 // Must exactly match GOOGLE_SHEETS_SECRET in the website's environment variables.
-const SECRET = "C7fvqv3SCqCG3_I3omnR17ybuTNQp39W";
+// Paste it here in the Apps Script editor only — never commit the real value to git.
+const SECRET = "ZZ3BRM2Gt5gt4Wg6prTeV-XmnD7YrlY_";
+const PLACEHOLDER_SECRET = "PASTE_YOUR_SECRET_HERE";
+
+// The live website address, without a trailing slash — e.g. "https://aurelia-cafe.vercel.app".
+// Used to send the status-change and reminder emails.
+const SITE_URL = "PASTE_YOUR_SITE_URL_HERE";
+
+// Café time zone, used to work out "tomorrow" for reminders.
+const TIME_ZONE = "Asia/Kolkata";
+// Reminders go out for tomorrow's Confirmed bookings, between these hours (café time).
+const REMINDER_FROM_HOUR = 10;
+const REMINDER_UNTIL_HOUR = 21;
+// Changing Status to one of these emails the guest.
+const NOTIFY_STATUSES = ["Confirmed", "Declined", "Cancelled"];
 
 const SHEET_NAME = "Reservations";
 const COLUMNS = {
@@ -33,6 +52,10 @@ const COLUMNS = {
   time: "Time",
   guests: "Guests",
   notes: "Special requests",
+  event: "Event",
+  whatsapp: "WhatsApp",
+  guestNotified: "Guest notified",
+  reminderSent: "Reminder sent",
 };
 const HEADERS = Object.keys(COLUMNS).map(function (k) { return COLUMNS[k]; });
 const STATUSES = ["Pending", "Guest not emailed", "Confirmed", "Declined", "Cancelled", "Completed", "No-show", "Email failed"];
@@ -41,6 +64,8 @@ const STATUSES = ["Pending", "Guest not emailed", "Confirmed", "Declined", "Canc
  * ("Email failed" is from older versions of this script; "Guest not emailed" is still an active booking.)
  */
 const INACTIVE = ["Declined", "Cancelled", "Email failed"];
+/** After these, the guest can't change or cancel online (the website sends the same list). */
+const CLOSED = ["Declined", "Cancelled", "Completed", "No-show", "Email failed"];
 /** How many recent rows to check for duplicates and capacity (keeps it fast; use the yearly archive). */
 const SCAN_ROWS = 5000;
 
@@ -53,7 +78,7 @@ function doPost(e) {
   } catch (err) {
     return respond({ ok: false, error: "invalid json" });
   }
-  if (!SECRET || SECRET === "C7fvqv3SCqCG3_I3omnR17ybuTNQp39W" || body.secret !== SECRET) {
+  if (!SECRET || SECRET === PLACEHOLDER_SECRET || body.secret !== SECRET) {
     return respond({ ok: false, error: "unauthorized" });
   }
 
@@ -68,6 +93,9 @@ function doPost(e) {
     if (body.action === "markGuestNotEmailed" || body.action === "markEmailFailed") {
       return respond(markGuestNotEmailed(String(body.reference || "")));
     }
+    if (body.action === "get") return respond(getBooking(String(body.reference || "")));
+    if (body.action === "cancel") return respond(guestCancel(String(body.reference || ""), body.closedStatuses));
+    if (body.action === "change") return respond(guestChange(body, body.rules || {}));
     return respond(addReservation(body.reservation, body.rules || {}));
   } catch (err) {
     console.error(err);
@@ -110,15 +138,7 @@ function addReservation(r, rules) {
   }
 
   // 2. Capacity: guests already booked near this time, plus this party.
-  const cap = rules.capacity;
-  if (cap && Number(cap.maxGuests) > 0) {
-    const windowMinutes = Number(cap.windowMinutes) || 0;
-    let booked = 0;
-    sameDay.forEach(function (row) {
-      if (row.minutes !== null && Math.abs(row.minutes - minutes) < Math.max(windowMinutes, 1)) booked += row.guests;
-    });
-    if (booked + (Number(r.guests) || 0) > Number(cap.maxGuests)) return { ok: true, full: true };
-  }
+  if (isFull(sameDay, minutes, Number(r.guests) || 0, rules.capacity)) return { ok: true, full: true };
 
   const row = new Array(sheet.getLastColumn()).fill("");
   const values = {
@@ -132,6 +152,8 @@ function addReservation(r, rules) {
     time: r.time,
     guests: Number(r.guests) || r.guests,
     notes: r.notes || "",
+    event: r.event || "",
+    whatsapp: r.whatsapp ? "Yes" : "No",
   };
   Object.keys(values).forEach(function (k) {
     row[cols[k] - 1] = safe(values[k]);
@@ -154,6 +176,219 @@ function markGuestNotEmailed(reference) {
     }
   }
   return { ok: false, error: "not found" };
+}
+
+/** Guests booked within the capacity window of `minutes`, plus this party, over the limit? */
+function isFull(rows, minutes, guests, cap) {
+  if (!cap || !(Number(cap.maxGuests) > 0)) return false;
+  const windowMinutes = Math.max(Number(cap.windowMinutes) || 0, 1);
+  let booked = 0;
+  rows.forEach(function (row) {
+    if (row.minutes !== null && Math.abs(row.minutes - minutes) < windowMinutes) booked += row.guests;
+  });
+  return booked + guests > Number(cap.maxGuests);
+}
+
+/** 1-based sheet row of a reference (most recent match), or 0. */
+function findRow(sheet, cols, reference) {
+  const last = sheet.getLastRow();
+  if (!reference || last < 2) return 0;
+  const refs = sheet.getRange(2, cols.reference, last - 1, 1).getDisplayValues();
+  for (let i = refs.length - 1; i >= 0; i--) {
+    if (refs[i][0] === reference) return i + 2;
+  }
+  return 0;
+}
+
+/** One row as a booking object (as the website expects it). */
+function readBooking(sheet, cols, row) {
+  const width = sheet.getLastColumn();
+  const v = sheet.getRange(row, 1, 1, width).getDisplayValues()[0];
+  const get = function (key) { return String(v[cols[key] - 1] || "").trim(); };
+  return {
+    reference: get("reference"),
+    status: get("status") || "Pending",
+    name: get("name"),
+    email: get("email"),
+    phone: get("phone"),
+    date: get("date"),
+    time: get("time"),
+    guests: parseInt(get("guests"), 10) || 0,
+    notes: get("notes"),
+    event: get("event"),
+    whatsapp: /^(yes|true|y)$/i.test(get("whatsapp")),
+    guestNotified: get("guestNotified"),
+    reminderSent: get("reminderSent"),
+  };
+}
+
+function getBooking(reference) {
+  const sheet = getSheet();
+  const cols = columnIndex(sheet);
+  const row = findRow(sheet, cols, reference);
+  if (!row) return { ok: false, error: "not found" };
+  return { ok: true, booking: readBooking(sheet, cols, row) };
+}
+
+function guestCancel(reference, closedStatuses) {
+  const sheet = getSheet();
+  const cols = columnIndex(sheet);
+  const row = findRow(sheet, cols, reference);
+  if (!row) return { ok: false, error: "not found" };
+  const closed = closedStatuses || CLOSED;
+  const current = readBooking(sheet, cols, row);
+  if (closed.indexOf(current.status) !== -1) return { ok: false, error: "closed" };
+  sheet.getRange(row, cols.status).setValue("Cancelled");
+  // Edits made by a script don't fire onStatusEdit, so the guest isn't emailed twice.
+  sheet.getRange(row, cols.guestNotified).setValue("Cancelled (by guest online)");
+  return { ok: true, booking: readBooking(sheet, cols, row) };
+}
+
+/** The guest picked a new date / time / number of guests: back to Pending for the owner to confirm. */
+function guestChange(body, rules) {
+  const reference = String(body.reference || "");
+  const sheet = getSheet();
+  const cols = columnIndex(sheet);
+  const row = findRow(sheet, cols, reference);
+  if (!row) return { ok: false, error: "not found" };
+  const closed = body.closedStatuses || CLOSED;
+  const current = readBooking(sheet, cols, row);
+  if (closed.indexOf(current.status) !== -1) return { ok: false, error: "closed" };
+
+  const date = String(body.date || "");
+  const time = String(body.time || "");
+  const guests = Number(body.guests) || 0;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || toMinutes(time) === null || guests < 1) return { ok: false, error: "invalid change" };
+
+  const others = activeRowsOn(sheet, cols, date, reference);
+  if (isFull(others, toMinutes(time), guests, rules.capacity)) return { ok: true, full: true };
+
+  sheet.getRange(row, cols.date).setValue(date);
+  sheet.getRange(row, cols.time).setValue(time);
+  sheet.getRange(row, cols.guests).setValue(guests);
+  sheet.getRange(row, cols.status).setValue("Pending");
+  sheet.getRange(row, cols.guestNotified).setValue("");
+  sheet.getRange(row, cols.reminderSent).setValue("");
+  const note = "Changed online " + Utilities.formatDate(new Date(), TIME_ZONE, "yyyy-MM-dd HH:mm") +
+    " (was " + current.date + " " + current.time + ", " + current.guests + " guests)";
+  sheet.getRange(row, cols.reference).setNote(note);
+  return { ok: true, booking: readBooking(sheet, cols, row) };
+}
+
+// ───────────────────────── Guest emails: status changes & reminders ─────────────────────────
+
+/**
+ * Installable "On edit" trigger (set up by installTriggers). When the owner changes Status to
+ * Confirmed, Declined or Cancelled, the website emails the guest (and WhatsApps them if they
+ * opted in). The "Guest notified" column records what was sent, so re-selecting the same status
+ * doesn't email twice; if sending fails it says so — pick the status again to retry.
+ */
+function onStatusEdit(e) {
+  if (!e || !e.range) return;
+  const sheet = e.range.getSheet();
+  if (sheet.getName() !== SHEET_NAME) return;
+  const cols = columnIndex(sheet);
+  const first = e.range.getColumn();
+  const lastCol = first + e.range.getNumColumns() - 1;
+  if (cols.status < first || cols.status > lastCol) return;
+
+  const startRow = Math.max(e.range.getRow(), 2);
+  const endRow = e.range.getRow() + e.range.getNumRows() - 1;
+  if (endRow - startRow > 50) return; // a big paste or sort — don't email everyone
+  for (let row = startRow; row <= endRow; row++) {
+    const b = readBooking(sheet, cols, row);
+    if (!b.reference || NOTIFY_STATUSES.indexOf(b.status) === -1) continue;
+    if (b.guestNotified.indexOf(b.status) === 0) continue; // already told the guest this
+    const result = callWebsite({ event: "status", status: b.status, booking: b });
+    sheet.getRange(row, cols.guestNotified).setValue(describe(b.status, result));
+  }
+}
+
+/**
+ * Time-driven trigger, every hour (set up by installTriggers). Between REMINDER_FROM_HOUR and
+ * REMINDER_UNTIL_HOUR, sends a reminder for each Confirmed booking dated tomorrow that hasn't
+ * had one, and fills in "Reminder sent".
+ */
+function sendReminders() {
+  const now = new Date();
+  const hour = Number(Utilities.formatDate(now, TIME_ZONE, "H"));
+  if (hour < REMINDER_FROM_HOUR || hour > REMINDER_UNTIL_HOUR) return;
+  const tomorrow = Utilities.formatDate(new Date(now.getTime() + 24 * 60 * 60 * 1000), TIME_ZONE, "yyyy-MM-dd");
+
+  const sheet = getSheet();
+  const cols = columnIndex(sheet);
+  const last = sheet.getLastRow();
+  if (last < 2) return;
+  const start = Math.max(2, last - SCAN_ROWS + 1);
+  const n = last - start + 1;
+  const dates = sheet.getRange(start, cols.date, n, 1).getDisplayValues();
+  const statuses = sheet.getRange(start, cols.status, n, 1).getDisplayValues();
+  const sent = sheet.getRange(start, cols.reminderSent, n, 1).getDisplayValues();
+
+  let count = 0;
+  for (let i = 0; i < n && count < 40; i++) {
+    if (dates[i][0] !== tomorrow || statuses[i][0].trim() !== "Confirmed" || sent[i][0]) continue;
+    const row = start + i;
+    const result = callWebsite({ event: "reminder", booking: readBooking(sheet, cols, row) });
+    if (result.ok) {
+      sheet.getRange(row, cols.reminderSent).setValue(Utilities.formatDate(new Date(), TIME_ZONE, "yyyy-MM-dd HH:mm") + channels(result));
+    } else {
+      console.error("Reminder failed for row " + row + ": " + result.error); // retried next hour
+    }
+    count++;
+  }
+}
+
+function callWebsite(payload) {
+  if (!SITE_URL || SITE_URL === "PASTE_YOUR_SITE_URL_HERE") return { ok: false, error: "SITE_URL is not set in the Apps Script" };
+  payload.secret = SECRET;
+  try {
+    const res = UrlFetchApp.fetch(SITE_URL.replace(/\/+$/, "") + "/api/notify", {
+      method: "post",
+      contentType: "application/json",
+      payload: JSON.stringify(payload),
+      muteHttpExceptions: true,
+      followRedirects: true,
+    });
+    const text = res.getContentText();
+    try {
+      return JSON.parse(text);
+    } catch (err) {
+      return { ok: false, error: "HTTP " + res.getResponseCode() + ": " + text.slice(0, 120) };
+    }
+  } catch (err) {
+    return { ok: false, error: String(err).slice(0, 160) };
+  }
+}
+
+function channels(result) {
+  const list = [];
+  if (result.email) list.push("email");
+  if (result.whatsapp) list.push("WhatsApp");
+  return list.length ? " (" + list.join(" + ") + ")" : "";
+}
+
+function describe(status, result) {
+  const when = Utilities.formatDate(new Date(), TIME_ZONE, "yyyy-MM-dd HH:mm");
+  if (result.ok) return status + " · " + when + channels(result);
+  return "NOT SENT (" + status + "): " + (result.error || "unknown error") + " — select the status again to retry";
+}
+
+/**
+ * Run ONCE from the editor (▶ Run → installTriggers) and allow the permissions it asks for.
+ * Sets up: status-change emails (on edit), hourly reminders, and the yearly archive.
+ * Safe to run again — it replaces its own triggers.
+ */
+function installTriggers() {
+  const ours = ["onStatusEdit", "sendReminders", "archiveOldReservations"];
+  ScriptApp.getProjectTriggers()
+    .filter(function (t) { return ours.indexOf(t.getHandlerFunction()) !== -1; })
+    .forEach(function (t) { ScriptApp.deleteTrigger(t); });
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  ScriptApp.newTrigger("onStatusEdit").forSpreadsheet(ss).onEdit().create();
+  ScriptApp.newTrigger("sendReminders").timeBased().everyHours(1).create();
+  ScriptApp.newTrigger("archiveOldReservations").timeBased().onMonthDay(1).atHour(1).create();
+  columnIndex(getSheet()); // adds any new columns now
 }
 
 // ───────────────────────── Yearly archive ─────────────────────────
@@ -270,14 +505,14 @@ function formatColumns(sheet, cols) {
     const rule = SpreadsheetApp.newDataValidation().requireValueInList(values, true).setAllowInvalid(true).build();
     statusRange.setDataValidation(rule);
   }
-  [cols.phone, cols.date, cols.time].forEach(function (c) {
+  [cols.phone, cols.date, cols.time, cols.guestNotified, cols.reminderSent].forEach(function (c) {
     const r = sheet.getRange(2, c, rows, 1);
     if (r.getNumberFormat() !== "@") r.setNumberFormat("@");
   });
 }
 
 /** Active rows (status not in INACTIVE) whose Date is `date`, from the most recent SCAN_ROWS rows. */
-function activeRowsOn(sheet, cols, date) {
+function activeRowsOn(sheet, cols, date, excludeReference) {
   const last = sheet.getLastRow();
   if (last < 2) return [];
   const start = Math.max(2, last - SCAN_ROWS + 1);
@@ -289,6 +524,7 @@ function activeRowsOn(sheet, cols, date) {
   const rows = [];
   for (let i = 0; i < n; i++) {
     if (dates[i][0] !== date || INACTIVE.indexOf(statuses[i][0].trim()) !== -1) continue;
+    if (excludeReference && refs[i][0] === excludeReference) continue;
     rows.push({
       reference: refs[i][0],
       email: emails[i][0].trim().toLowerCase(),

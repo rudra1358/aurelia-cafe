@@ -1,5 +1,6 @@
 import type { StaticImageData } from "next/image";
 import Photo from "./Photo";
+import { T } from "./Language";
 import croissants from "@/public/images/croissants.jpg";
 import cappuccino from "@/public/images/cappuccino.jpg";
 import pancakes from "@/public/images/pancakes.jpg";
@@ -35,14 +36,15 @@ export default function FeaturedItems() {
       <div className="wrap">
         <div className="sg-head">
           <div className="l">
-            <p className="eyebrow text-accent-ink reveal">Signature experiences</p>
+            <p className="eyebrow text-accent-ink reveal">
+              <T k="exp.eyebrow" />
+            </p>
             <h2 className="h2 reveal" id="sg-title" style={{ marginTop: 22 }}>
-              Made to be savored.
+              <T k="exp.title" />
             </h2>
           </div>
           <p className="r reveal">
-            A glimpse of the flavors and small rituals that shape a visit to Aurelia — from the first pastry of the
-            morning to a slow afternoon coffee.
+            <T k="exp.intro" />
           </p>
         </div>
 
@@ -62,7 +64,7 @@ export default function FeaturedItems() {
         </div>
 
         <p className="sg-note">
-          Photography is illustrative of the Aurelia experience. Please ask our team about today’s offerings.
+          <T k="exp.note" />
         </p>
       </div>
     </section>

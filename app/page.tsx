@@ -6,7 +6,12 @@ import Menu from "@/components/Menu";
 import Reservation from "@/components/Reservation";
 import Contact from "@/components/Contact";
 import Footer from "@/components/Footer";
+import Events from "@/components/Events";
+import Social from "@/components/Social";
 import { site } from "@/data/site";
+
+// The events list depends on today's date: re-render at most every hour.
+export const revalidate = 3600;
 
 export default function HomePage() {
   // Structured data for search engines. Only facts that have been provided are included.
@@ -41,7 +46,9 @@ export default function HomePage() {
         <About />
         <FeaturedItems />
         <Menu />
+        <Events limit={3} />
         <Reservation />
+        <Social />
         <Contact />
       </main>
       <Footer />

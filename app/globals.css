@@ -335,3 +335,114 @@
   html { scroll-behavior: auto; }
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
+
+/* ───────────────────────── Language, menu tools, events, reviews, manage booking ───────────────────────── */
+@layer components {
+  /* Gujarati / Hindi: Indic fonts, and no wide uppercase letter-spacing (it breaks the script). */
+  :root:lang(gu) body { font-family: var(--font-dm-sans), var(--font-gujarati), "Nirmala UI", system-ui, sans-serif; }
+  :root:lang(hi) body { font-family: var(--font-dm-sans), var(--font-devanagari), "Nirmala UI", system-ui, sans-serif; }
+  :root:lang(gu) :is(.h2, .hero-quote, .ab-lede, .done h3, .ft-blurb) { font-family: var(--font-cormorant), var(--font-gujarati), serif; }
+  :root:lang(hi) :is(.h2, .hero-quote, .ab-lede, .done h3, .ft-blurb) { font-family: var(--font-cormorant), var(--font-devanagari), serif; }
+  :root:lang(gu) :is(.eyebrow, .btn, .nav-link, .fld label, .tag, .dl dt, .ft h2),
+  :root:lang(hi) :is(.eyebrow, .btn, .nav-link, .fld label, .tag, .dl dt, .ft h2) { letter-spacing: .03em; }
+  :root:lang(gu) .h2, :root:lang(hi) .h2 { line-height: 1.25; }
+
+  .nav-end { display: flex; align-items: center; gap: 20px; }
+  .lang { display: inline-flex; border: 1px solid color-mix(in srgb, currentColor 40%, transparent); }
+  .lang button { min-width: 36px; height: 32px; padding: 0 8px; font: inherit; font-size: 12px; line-height: 1; color: inherit; background: transparent; border: 0; cursor: pointer; opacity: .75; }
+  .lang button + button { border-left: 1px solid color-mix(in srgb, currentColor 30%, transparent); }
+  .lang button:hover { opacity: 1; }
+  .lang button[aria-pressed="true"] { opacity: 1; background: color-mix(in srgb, currentColor 14%, transparent); font-weight: 600; }
+  .mp-lang { margin-top: 24px; }
+  .mp-lang button { height: 44px; min-width: 56px; font-size: 14px; }
+
+  /* Menu search & filters */
+  .mn-tools { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 16px 24px; margin: -40px auto 72px; max-width: 880px; }
+  .mn-search { display: flex; align-items: center; gap: 10px; flex: 1 1 280px; max-width: 380px; border-bottom: 1px solid rgba(48, 40, 32, .35); color: var(--color-stone-ink); }
+  .mn-search:focus-within { border-bottom-color: var(--color-accent-ink); }
+  .mn-search input { flex: 1; min-width: 0; padding: 12px 0; font: inherit; font-size: 16px; color: var(--color-espresso); background: transparent; border: 0; outline: none; }
+  .mn-search input::placeholder { color: #8f867b; }
+  .mn-filters { display: flex; flex-wrap: wrap; gap: 8px; }
+  .mn-filters button { display: inline-flex; align-items: center; gap: 8px; min-height: 40px; padding: 0 16px; font: inherit; font-size: 13px; color: var(--color-espresso); background: transparent; border: 1px solid rgba(48, 40, 32, .25); border-radius: 999px; cursor: pointer; transition: background-color .3s ease, color .3s ease; }
+  .mn-filters button:hover { border-color: var(--color-espresso); }
+  .mn-filters button[aria-pressed="true"] { background: var(--color-espresso); color: var(--color-cream); border-color: var(--color-espresso); }
+  .mn-empty { text-align: center; padding: 48px 0; color: var(--color-stone-ink); }
+  .mn-empty p { margin: 0 0 24px; }
+  .mitem { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+  .mdesc, .mallergens { font-size: 13px; color: var(--color-stone-ink); }
+  .tag-soft { border-style: dashed; }
+  .diet { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 14px; height: 14px; border: 1.5px solid; transform: translateY(1px); }
+  .diet span { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+  .diet-veg { color: #2e7d32; }
+  .diet-nonveg { color: #b3261e; }
+  .diet-egg { color: #c77700; }
+  .diet-egg span { border-radius: 0; width: 0; height: 0; background: none; border-left: 4px solid transparent; border-right: 4px solid transparent; border-bottom: 7px solid currentColor; }
+
+  /* Events */
+  .ev-head { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 24px 64px; margin-bottom: 64px; }
+  .ev-intro { margin: 0; max-width: 440px; color: var(--color-stone-ink); }
+  .ev-page { padding-top: calc(168px + var(--demo-h)); min-height: 70vh; }
+  .ev-list { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--color-espresso); }
+  .ev-item { display: grid; grid-template-columns: minmax(180px, 1fr) minmax(0, 2.4fr) auto; gap: 24px 48px; align-items: center; padding: 36px 0; border-bottom: 1px solid rgba(48, 40, 32, .14); }
+  .ev-when { display: flex; gap: 12px; font-size: 14px; line-height: 1.5; color: var(--color-accent-ink); }
+  .ev-when svg { flex: none; margin-top: 2px; }
+  .ev-body h3 { margin: 0; font-family: var(--font-serif); font-weight: 400; font-size: 32px; line-height: 1.15; }
+  .ev-body p { margin: 10px 0 0; color: #4a4239; }
+  .ev-body .ev-price { font-size: 14px; color: var(--color-stone-ink); }
+  .ev-none { margin: 0; padding: 40px 0; border-top: 1px solid rgba(48, 40, 32, .14); color: var(--color-stone-ink); }
+  .ev-all { display: inline-block; margin-top: 32px; font-size: 14px; color: var(--color-espresso); }
+
+  /* Reservation extras */
+  .fcheck { flex-direction: row; align-items: flex-start; gap: 12px; }
+  .fcheck input { width: 18px; height: 18px; margin: 2px 0 0; accent-color: var(--color-accent-light); flex: none; }
+  .res .fcheck label { font-size: 14px; letter-spacing: 0; text-transform: none; color: rgba(250, 249, 246, .82); font-weight: 400; }
+
+  /* Online links, reviews, Instagram */
+  .ct-online { margin-top: 40px; }
+  .ct-online ul { list-style: none; margin: 14px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 10px 24px; font-size: 15px; }
+  .ct-online a { color: var(--color-espresso); }
+  .rv { text-align: center; max-width: 960px; margin: 0 auto; }
+  .rv-rating { display: inline-flex; align-items: center; gap: 8px; margin: 24px 0 0; color: var(--color-accent-ink); }
+  .rv-list { list-style: none; margin: 56px 0 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 40px; text-align: left; }
+  .rv-list blockquote { margin: 0; font-family: var(--font-serif); font-style: italic; font-size: 24px; line-height: 1.4; }
+  .rv-list p { margin: 14px 0 0; font-size: 13px; color: var(--color-stone-ink); }
+  .ig-head { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 24px; margin-bottom: 40px; }
+  .ig-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+  .ig-grid .frame { aspect-ratio: 1; }
+
+  /* Manage booking */
+  .mb-page { padding: calc(160px + var(--demo-h)) 0 140px; min-height: 80vh; }
+  .mb, .mb-msg { max-width: 640px; margin-top: 48px; }
+  .mb-msg h2 { margin: 0; font-family: var(--font-serif); font-weight: 300; font-size: 36px; }
+  .mb-msg p, .mb-hi, .mb-reason, .mb-help, .mb-panel > p { color: rgba(250, 249, 246, .82); }
+  .mb-msg a:not(.btn), .mb-help a { color: var(--color-cream); }
+  .mb-dl { margin: 32px 0 0; padding: 0; border-top: 1px solid rgba(250, 249, 246, .25); }
+  .mb-dl > div { display: flex; justify-content: space-between; gap: 24px; padding: 16px 0; border-bottom: 1px solid rgba(250, 249, 246, .14); }
+  .mb-dl dt { font-size: 11px; letter-spacing: .2em; text-transform: uppercase; color: var(--color-accent-light); }
+  .mb-dl dd { margin: 0; text-align: right; font-size: 17px; }
+  .mb-notice { margin: 32px 0 0; padding: 16px 18px; border: 1px solid rgba(196, 170, 136, .5); color: var(--color-cream); }
+  .mb-reason { margin: 24px 0 0; font-size: 14px; }
+  .mb-actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 40px; }
+  .mb-panel { margin-top: 40px; padding-top: 32px; border-top: 1px solid rgba(250, 249, 246, .25); }
+  .mb-panel fieldset { border: 0; margin: 0; padding: 0; min-width: 0; }
+  .mb-help { margin-top: 56px; font-size: 14px; }
+}
+
+.nav-link { white-space: nowrap; }
+@media (max-width: 1180px) {
+  .nav-links { gap: 28px; }
+  /* Room for the language switch: "Reserve" stays in the hero, menu and mobile panel. */
+  .nav-cta { display: none; }
+}
+@media (max-width: 900px) {
+  .nav-lang { display: none; }
+  .ev-item { grid-template-columns: minmax(0, 1fr); gap: 16px; }
+  .ev-btn { justify-self: start; }
+  .ig-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 640px) {
+  .mn-tools { margin-top: -24px; margin-bottom: 56px; }
+  .ev-body h3 { font-size: 28px; }
+  .mb-dl > div { flex-direction: column; gap: 4px; }
+  .mb-dl dd { text-align: left; }
+}

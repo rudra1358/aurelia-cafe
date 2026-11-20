@@ -1,4 +1,5 @@
 import Photo from "./Photo";
+import { T } from "./Language";
 import pourOver from "@/public/images/pour-over.jpg";
 import latteCups from "@/public/images/latte-cups.jpg";
 
@@ -14,19 +15,21 @@ export default function About() {
           />
         </div>
         <div className="ab-text">
-          <p className="eyebrow text-accent-ink reveal">About Aurelia</p>
+          <p className="eyebrow text-accent-ink reveal">
+            <T k="about.eyebrow" />
+          </p>
           <h2 className="h2 reveal" id="about-title" style={{ marginTop: 22 }}>
-            A little more than just coffee.
+            <T k="about.title" />
           </h2>
           <p className="ab-lede reveal">
-            At Aurelia, we believe the best moments are often the simplest ones. A freshly brewed cup of coffee,
-            conversations that last a little longer, and food made to be enjoyed.
+            <T k="about.lede" />
           </p>
           <div className="ab-body reveal">
-            <p>We created Aurelia as a welcoming space where quality, comfort, and thoughtful experiences come together.</p>
             <p>
-              Whether you’re stopping by for your morning coffee, meeting friends, or taking a moment for yourself,
-              there’s always a place for you here.
+              <T k="about.p1" />
+            </p>
+            <p>
+              <T k="about.p2" />
             </p>
           </div>
           <div className="ab-small">

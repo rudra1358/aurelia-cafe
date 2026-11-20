@@ -4,12 +4,15 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { ArrowRight, Menu as MenuIcon, X } from "lucide-react";
 import { mailtoHref, site, telHref } from "@/data/site";
+import type { TranslationKey } from "@/data/translations";
+import { LanguageSwitch, useT } from "./Language";
 
-const links = [
-  { href: "/#home", label: "Home" },
-  { href: "/#about", label: "About Us" },
-  { href: "/#menu", label: "Menu" },
-  { href: "/#contact", label: "Contact Us" },
+const links: { href: string; key: TranslationKey }[] = [
+  { href: "/#home", key: "nav.home" },
+  { href: "/#about", key: "nav.about" },
+  { href: "/#menu", key: "nav.menu" },
+  { href: "/events", key: "nav.events" },
+  { href: "/#contact", key: "nav.contact" },
 ];
 
 /**
@@ -19,6 +22,7 @@ const links = [
 export default function Navbar({ variant = "overlay" }: { variant?: "overlay" | "solid" }) {
   const [scrolled, setScrolled] = useState(false);
   const [open, setOpen] = useState(false);
+  const t = useT();
 
   useEffect(() => {
     if (variant === "solid") return;
@@ -58,24 +62,27 @@ export default function Navbar({ variant = "overlay" }: { variant?: "overlay" | 
             {links.map((l) => (
               <li key={l.href}>
                 <a className="nav-link" href={l.href}>
-                  {l.label}
+                  {t(l.key)}
                 </a>
               </li>
             ))}
           </ul>
-          <a className="btn nav-cta" href="/#reservation">
-            Make a reservation
-          </a>
-          <button
-            className="burger"
-            type="button"
-            aria-controls="mobile-menu"
-            aria-expanded={open}
-            aria-label={open ? "Close menu" : "Open menu"}
-            onClick={() => setOpen((o) => !o)}
-          >
-            {open ? <X size={24} strokeWidth={1.3} aria-hidden /> : <MenuIcon size={24} strokeWidth={1.3} aria-hidden />}
-          </button>
+          <div className="nav-end">
+            <LanguageSwitch className="nav-lang" />
+            <a className="btn nav-cta" href="/#reservation">
+              {t("nav.reserve")}
+            </a>
+            <button
+              className="burger"
+              type="button"
+              aria-controls="mobile-menu"
+              aria-expanded={open}
+              aria-label={open ? t("nav.close") : t("nav.open")}
+              onClick={() => setOpen((o) => !o)}
+            >
+              {open ? <X size={24} strokeWidth={1.3} aria-hidden /> : <MenuIcon size={24} strokeWidth={1.3} aria-hidden />}
+            </button>
+          </div>
         </div>
       </nav>
 
@@ -85,15 +92,16 @@ export default function Navbar({ variant = "overlay" }: { variant?: "overlay" | 
             {links.map((l) => (
               <li key={l.href}>
                 <a href={l.href} onClick={close}>
-                  {l.label}
+                  {t(l.key)}
                   <ArrowRight size={22} strokeWidth={1.2} aria-hidden />
                 </a>
               </li>
             ))}
           </ul>
           <a className="btn btn-dark" href="/#reservation" onClick={close}>
-            Make a reservation
+            {t("nav.reserve")}
           </a>
+          <LanguageSwitch className="mp-lang" />
           <div className="mp-meta">
             <a href={telHref}>{site.contact.phoneDisplay}</a>
             <a href={mailtoHref}>{site.contact.email}</a>

@@ -2,7 +2,8 @@ import "server-only";
 import { after } from "next/server";
 import nodemailer, { type SendMailOptions, type Transporter } from "nodemailer";
 import { site } from "@/data/site";
-import { customerEmail, ownerEmail } from "./email-templates";
+import { customerEmail, ownerEmail, type EmailContent } from "./email-templates";
+import { manageUrl } from "./booking-token";
 import type { Reservation } from "./validation";
 import type { SheetStatus } from "./sheets";
 
@@ -248,7 +249,8 @@ export async function sendReservationEmails(
     }
   }
 
-  const c = customerEmail(r, meta.reference);
+  // The manage link only works once the booking is in the sheet.
+  const c = customerEmail(r, meta.reference, inSheet ? manageUrl(meta.reference) : null);
   let guest: Label | null = null;
   try {
     guest = await deliver(
@@ -297,6 +299,47 @@ export function alertOwnerGuestNotEmailed(r: Reservation, reference: string): vo
     after(send); // runs once the response has been sent
   } catch {
     void send(); // outside a request (e.g. scripts)
+  }
+}
+
+/**
+ * One email to a guest (status updates, reminders, changes). Returns false if it couldn't be sent.
+ * `calendar` attaches an .ics invite that mail apps show as an "Add to calendar" event.
+ */
+export async function sendGuestEmail(
+  to: { name: string; address: string },
+  content: EmailContent,
+  what: string,
+  calendar?: string,
+): Promise<boolean> {
+  const cfg = readConfig();
+  try {
+    await deliver(
+      cfg,
+      {
+        to,
+        replyTo: { name: site.name, address: cfg.owner },
+        subject: content.subject,
+        text: content.text,
+        html: content.html,
+        ...(calendar ? { icalEvent: { filename: "aurelia-booking.ics", method: "PUBLISH", content: calendar } } : {}),
+      },
+      what,
+    );
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** One email to the owner. Returns false if it couldn't be sent. */
+export async function sendOwnerEmail(content: EmailContent, what: string, replyTo?: { name: string; address: string }): Promise<boolean> {
+  const cfg = readConfig();
+  try {
+    await deliver(cfg, { to: cfg.owner, replyTo, subject: content.subject, text: content.text, html: content.html }, what);
+    return true;
+  } catch {
+    return false;
   }
 }
 

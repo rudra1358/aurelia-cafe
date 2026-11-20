@@ -14,7 +14,9 @@ const { legal } = site;
 
 /** Name of the backup email provider, if one is configured (read at build time). */
 const fallbackHost = process.env.FALLBACK_SMTP_HOST?.trim() ?? "";
-const fallbackProvider = fallbackHost ? (/brevo|sendinblue/i.test(fallbackHost) ? "Brevo" : "A backup email delivery provider") : null;
+/** WhatsApp updates are mentioned only when they're switched on (read at build time). */
+const whatsappOn = process.env.NEXT_PUBLIC_WHATSAPP_OPT_IN?.trim() === "true" || !!process.env.WHATSAPP_TOKEN?.trim();
+const fallbackProvider =fallbackHost ? (/brevo|sendinblue/i.test(fallbackHost) ? "Brevo" : "A backup email delivery provider") : null;
 
 const sections: LegalSection[] = [
   {
@@ -105,6 +107,17 @@ const sections: LegalSection[] = [
           is given a short reference number that appears in these emails. Our team may
           then email or call you about your reservation.
         </p>
+        <p>
+          We also email you when your booking is confirmed, declined or cancelled (a confirmation includes a calendar file
+          you can add to your calendar), and send a reminder the day before a confirmed booking. These emails contain a
+          private link that lets you change or cancel your booking; anyone with that link can do so, so please don’t share it.
+        </p>
+        {whatsappOn && (
+          <p>
+            If you tick the WhatsApp box on the form, we also send these booking updates to your phone number on WhatsApp.
+            You can ask us to stop at any time.
+          </p>
+        )}
         <p>We do not send newsletters or promotional emails. If that changes, we will ask for your consent first.</p>
       </>
     ),
@@ -147,6 +160,12 @@ const sections: LegalSection[] = [
             <li>
               <strong>{fallbackProvider}</strong> — a backup email service, used to send reservation emails only when our
               main email account can’t. Your request details pass through it when it’s used.
+            </li>
+          )}
+          {whatsappOn && (
+            <li>
+              <strong>WhatsApp (Meta)</strong> — to send booking updates to guests who ask for them, and booking alerts to
+              the café. Your name, phone number and booking details pass through it.
             </li>
           )}
           <li>

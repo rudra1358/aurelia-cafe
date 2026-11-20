@@ -1,8 +1,27 @@
 import type { Metadata, Viewport } from "next";
-import { Cormorant_Garamond, DM_Sans } from "next/font/google";
+import { Cormorant_Garamond, DM_Sans, Noto_Sans_Devanagari, Noto_Sans_Gujarati } from "next/font/google";
 import { site } from "@/data/site";
 import DemoBanner from "@/components/DemoBanner";
+import { LanguageProvider } from "@/components/Language";
 import "./globals.css";
+
+// Gujarati and Hindi text (language toggle). Not preloaded: the browser only downloads
+// them when Gujarati or Devanagari characters are on the page.
+const notoGujarati = Noto_Sans_Gujarati({
+  subsets: ["gujarati"],
+  weight: ["300", "400", "500"],
+  variable: "--font-gujarati",
+  display: "swap",
+  preload: false,
+});
+
+const notoDevanagari = Noto_Sans_Devanagari({
+  subsets: ["devanagari"],
+  weight: ["300", "400", "500"],
+  variable: "--font-devanagari",
+  display: "swap",
+  preload: false,
+});
 
 const cormorant = Cormorant_Garamond({
   subsets: ["latin"],
@@ -57,7 +76,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html
       lang="en-IN"
-      className={`${cormorant.variable} ${dmSans.variable}${site.demo.enabled ? " has-demo" : ""}`}
+      className={`${cormorant.variable} ${dmSans.variable} ${notoGujarati.variable} ${notoDevanagari.variable}${site.demo.enabled ? " has-demo" : ""}`}
       data-scroll-behavior="smooth"
     >
       <body>
@@ -65,7 +84,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <a href="#main" className="sr-only focus:not-sr-only focus:fixed focus:top-3 focus:left-3 focus:z-[60] focus:bg-cream focus:px-4 focus:py-3 focus:text-sm">
           Skip to content
         </a>
-        {children}
+        <LanguageProvider>{children}</LanguageProvider>
       </body>
     </html>
   );

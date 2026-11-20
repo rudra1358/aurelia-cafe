@@ -1,10 +1,25 @@
 import { ArrowUpRight } from "lucide-react";
 import Photo from "./Photo";
+import { T } from "./Language";
 import barInterior from "@/public/images/bar-interior.jpg";
 import { directionsUrl, hasExactLocation, mailtoHref, mapEmbedUrl, site, telHref } from "@/data/site";
+import type { TranslationKey } from "@/data/translations";
+
+/** Instagram, reviews and delivery links — only the ones the owner has filled in (data/site.ts → online). */
+function onlineLinks(): { href: string; key: TranslationKey }[] {
+  const o = site.online;
+  const all: [string | null, TranslationKey][] = [
+    [o.swiggy, "contact.swiggy"],
+    [o.zomato, "contact.zomato"],
+    [o.googleReviews, "contact.reviews"],
+    [o.instagram, "contact.instagram"],
+  ];
+  return all.filter((l): l is [string, TranslationKey] => !!l[0]).map(([href, key]) => ({ href, key }));
+}
 
 export default function Contact() {
   const { location } = site;
+  const online = onlineLinks();
   return (
     <section className="sec" id="contact" aria-labelledby="ct-title">
       <div className="wrap">
@@ -17,29 +32,39 @@ export default function Contact() {
             />
           </div>
           <div className="ct-text">
-            <p className="eyebrow text-accent-ink reveal">Contact</p>
+            <p className="eyebrow text-accent-ink reveal">
+              <T k="contact.eyebrow" />
+            </p>
             <h2 className="h2 reveal" id="ct-title" style={{ marginTop: 22 }}>
-              Come say hello.
+              <T k="contact.title" />
             </h2>
             <dl className="dl reveal">
               <div>
-                <dt>Email</dt>
+                <dt>
+                  <T k="contact.email" />
+                </dt>
                 <dd>
                   <a href={mailtoHref}>{site.contact.email}</a>
                 </dd>
               </div>
               <div>
-                <dt>Phone</dt>
+                <dt>
+                  <T k="contact.phone" />
+                </dt>
                 <dd>
                   <a href={telHref}>{site.contact.phoneDisplay}</a>
                 </dd>
               </div>
               <div>
-                <dt>Hours</dt>
+                <dt>
+                  <T k="contact.hours" />
+                </dt>
                 <dd>{site.hours.display}</dd>
               </div>
               <div>
-                <dt>Location</dt>
+                <dt>
+                  <T k="contact.location" />
+                </dt>
                 <dd>
                   <address style={{ fontStyle: "normal" }}>
                     {location.exactAddress ? (
@@ -56,14 +81,30 @@ export default function Contact() {
             </dl>
             <div className="ct-btns">
               <a className="btn btn-dark" href={directionsUrl()} target="_blank" rel="noopener noreferrer">
-                Get directions
+                <T k="contact.directions" />
                 <ArrowUpRight size={14} strokeWidth={1.3} aria-hidden />
                 <span className="sr-only">(opens Google Maps in a new tab)</span>
               </a>
               <a className="btn btn-line" href="#reservation">
-                Reserve a table
+                <T k="contact.reserve" />
               </a>
             </div>
+            {online.length > 0 && (
+              <div className="ct-online">
+                <p className="eyebrow text-accent-ink">
+                  <T k="contact.online" />
+                </p>
+                <ul>
+                  {online.map((l) => (
+                    <li key={l.key}>
+                      <a href={l.href} target="_blank" rel="noopener noreferrer">
+                        <T k={l.key} /> ↗<span className="sr-only"> (opens in a new tab)</span>
+                      </a>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
           </div>
         </div>
 

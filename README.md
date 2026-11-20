@@ -92,6 +92,46 @@ Credentials stay on the server. Input is validated on both client and server, wi
 
 </td>
 </tr>
+<tr>
+<td valign="top">
+
+### 🔁 Full booking loop
+Set **Status** to Confirmed or Declined in the sheet and the guest is emailed automatically, with a **calendar invite** when confirmed and a **reminder** the day before. No admin panel needed.
+
+</td>
+<td valign="top">
+
+### ✏️ Guests manage their booking
+Every guest email has a signed **Change or cancel** link. Changes go back to Pending for you to confirm, and cancellations free up the table.
+
+</td>
+<td valign="top">
+
+### 💬 WhatsApp (optional)
+Owner alerts for new bookings and guest updates through the WhatsApp Cloud API. Guests opt in on the form.
+
+</td>
+</tr>
+<tr>
+<td valign="top">
+
+### 🥗 Menu labels & search
+Veg / non-veg marks, Jain and vegan labels, allergens, filter buttons and a search box.
+
+</td>
+<td valign="top">
+
+### 🎶 Events
+An `/events` page and home-page section. "Book a seat" opens the normal form with the event's date and time filled in.
+
+</td>
+<td valign="top">
+
+### 🌐 English · ગુજરાતી · हिन्दी
+A language switch in the navigation translates the site's interface and remembers the choice.
+
+</td>
+</tr>
 </table>
 
 <br>
@@ -160,9 +200,16 @@ sequenceDiagram
     API->>Gmail: Email 1: "Your Reservation Request"
     Gmail-->>Guest: Acknowledgement (not yet confirmed)
     API-->>Site: Success once the booking has reached the owner
-    Owner->>Guest: Contacts guest to confirm
-    Owner->>Sheet: Updates Status → Confirmed
+    Owner->>Sheet: Sets Status → Confirmed (or Declined)
+    Sheet->>API: Apps Script trigger calls /api/notify
+    API->>Gmail: "Confirmed" email + calendar invite (+ WhatsApp if opted in)
+    Gmail-->>Guest: Confirmation with "Change or cancel" link
+    Sheet->>API: Day before, 10 am–10 pm: reminder
+    API->>Gmail: Reminder email
+    Gmail-->>Guest: "See you tomorrow"
 ```
+
+**Guests changing or cancelling.** The "Change or cancel booking" link opens `/booking/AUR-…?t=…`. The `t` part is an HMAC signature of the reference, so a link can't be guessed or edited to open another booking. The guest can cancel, which sets the row to **Cancelled** and emails both of you. They can also pick a new date, time or party size: the change is checked against the form's rules and capacity, the row goes back to **Pending** (with a note on the Reference cell showing the old values), and you confirm it again. Bookings that are declined, cancelled, completed or in the past can't be changed online. For event bookings, guests can only cancel.
 
 > [!NOTE]
 > A submission is a reservation **request**, not a confirmed booking. The guest is told this on the form, on the success screen and in their email.
@@ -204,7 +251,12 @@ npm run dev                    # → http://localhost:3000
 | `FALLBACK_FROM_EMAIL` | — | Sender address verified with the backup provider |
 | `GOOGLE_SHEETS_WEBHOOK_URL` | — | Apps Script web app URL (ends in `/exec`). Leave empty to turn the sheet off |
 | `GOOGLE_SHEETS_SECRET` | — | Shared secret, which must match `SECRET` in the Apps Script |
-| `NEXT_PUBLIC_SITE_URL` | — | Public URL, used for SEO and social previews |
+| `NEXT_PUBLIC_SITE_URL` | — | Public URL, used for SEO, social previews and the "Change or cancel" links in emails |
+| `BOOKING_LINK_SECRET` | — | Signs the "Change or cancel" links. Defaults to `GOOGLE_SHEETS_SECRET` |
+| `WHATSAPP_TOKEN` · `WHATSAPP_PHONE_NUMBER_ID` | — | WhatsApp Cloud API. Empty = WhatsApp off. See [WhatsApp setup](#-whatsapp-setup) |
+| `WHATSAPP_OWNER_NUMBER` | — | Owner's WhatsApp number for new-booking alerts |
+| `WHATSAPP_TEMPLATE_LANG` | — | Language the templates were approved in (default `en`) |
+| `NEXT_PUBLIC_WHATSAPP_OPT_IN` | — | `true` shows the "updates on WhatsApp" checkbox on the form |
 
 > [!IMPORTANT]
 > `.env.local` is git-ignored. Never commit real credentials.
@@ -247,7 +299,7 @@ npm run dev                    # → http://localhost:3000
 
 1. **Create a sheet** at <https://sheets.new> (for example `Aurelia Reservations`).
 2. **Extensions → Apps Script.** Replace everything in `Code.gs` with [`scripts/google-apps-script.gs`](scripts/google-apps-script.gs).
-3. **Set the secret.** Paste the value of `GOOGLE_SHEETS_SECRET` from `.env.local` into `const SECRET = "…"`, then click **Save**.
+3. **Set the secret and site address.** In the Apps Script editor (not in this repository), paste the value of `GOOGLE_SHEETS_SECRET` from `.env.local` into `const SECRET = "…"`. Put your live site address (e.g. `https://aurelia-cafe.vercel.app`) into `const SITE_URL = "…"`, then click **Save**. Leave `PLACEHOLDER_SECRET` as it is.
    *Need a secret?* Run `node -e "console.log(require('crypto').randomBytes(24).toString('base64url'))"`
 4. **Deploy → New deployment → Web app**
    - Execute as: **Me**
@@ -255,10 +307,18 @@ npm run dev                    # → http://localhost:3000
    - Click **Authorize**. If you see "unverified app", click **Advanced → Go to …**. It's your own script.
 5. **Copy the Web app URL** (ends in `/exec`) into `GOOGLE_SHEETS_WEBHOOK_URL`.
 6. Run `npm run test:sheet`, then delete the test row it adds.
+7. **Turn on guest emails and reminders:** in the editor, choose `installTriggers` and click **▶ Run**, then allow the permissions it asks for (it needs to call your website). Run it once only. It also sets up the yearly archive.
 
-| Reference | Submitted (IST) | Status | Name | Email | Phone | Date | Time | Guests | Special requests |
-|:--|:--|:--|:--|:--|:--|:--|:--|:--:|:--|
-| `AUR-7KQ2XD` | 2026-11-19 18:42 | Pending ▾ | … | … | … | 2026-11-28 | 19:30 | 2 | … |
+| Reference | Submitted (IST) | Status | Name | Email | Phone | Date | Time | Guests | Special requests | Event | WhatsApp | Guest notified | Reminder sent |
+|:--|:--|:--|:--|:--|:--|:--|:--|:--:|:--|:--|:--|:--|:--|
+| `AUR-7KQ2XD` | 2026-11-19 18:42 | Pending ▾ | … | … | … | 2026-11-28 | 19:30 | 2 | … | | No | | |
+
+**Confirming, declining, reminders**
+- Change **Status** to **Confirmed**, **Declined** or **Cancelled** and the guest is emailed within a few seconds. A confirmation includes a calendar invite (`.ics`). If they opted in, they also get a WhatsApp message.
+- **Guest notified** records what was sent and when, e.g. `Confirmed · 2026-11-20 11:05 (email)`. Choosing the same status again doesn't email twice. If sending failed, the cell says `NOT SENT …` with the reason. Select the status again to retry.
+- **Reminders** go out once, for Confirmed bookings dated tomorrow, when the hourly trigger runs between 10 am and 10 pm. **Reminder sent** shows when.
+- Pasting or sorting more than 50 rows at once never sends emails.
+- These emails come from the website, so emails, calendar invites and WhatsApp all use the same templates and the same backup email provider.
 
 **What the script handles**
 - **Columns by name:** you can reorder columns or add your own (e.g. "Table", "Notes from staff"). If you rename or delete a required column, it's added back at the end.
@@ -270,6 +330,34 @@ npm run dev                    # → http://localhost:3000
 
 > [!TIP]
 > After editing the script, go to **Deploy → Manage deployments → ✏️ → New version**. Saving alone doesn't update the live web app, and the URL stays the same.
+
+</details>
+
+<br>
+
+## ✦ WhatsApp setup
+
+<details>
+<summary><b>Optional: owner alerts and guest updates on WhatsApp</b></summary>
+
+<br>
+
+Uses Meta's **WhatsApp Cloud API**. Meta charges for business-initiated template messages, so check the current pricing for India before turning it on.
+
+1. In <https://developers.facebook.com>, create an app of type **Business**, add **WhatsApp**, and register the café's phone number. Copy the **Phone number ID**.
+2. Create a **System User** access token (Business Settings → System users) with `whatsapp_business_messaging` permission. Temporary tokens expire after 24 hours.
+3. In **WhatsApp Manager → Message templates**, create these four templates (category **Utility**) with exactly these names and variables:
+
+| Template name | Sent to | Body (example) |
+|:--|:--|:--|
+| `aurelia_new_booking` | Owner | New booking: {{1}}, {{2}} on {{3}} at {{4}}. Phone {{5}}. Ref {{6}} |
+| `aurelia_booking_changed` | Owner | Booking {{1}} ({{2}}) was {{3}} by the guest. |
+| `aurelia_booking_status` | Guest | Hi {{1}}, your Aurelia booking is {{2}}: {{3}} at {{4}}, {{5}}. Ref {{6}} |
+| `aurelia_booking_reminder` | Guest | Hi {{1}}, see you tomorrow at Aurelia — {{2}} at {{3}}, {{4}}. Ref {{5}} |
+
+4. Set `WHATSAPP_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID`, `WHATSAPP_OWNER_NUMBER` and `NEXT_PUBLIC_WHATSAPP_OPT_IN=true`, then redeploy.
+
+Guests only receive WhatsApp messages if they tick the box on the form (WhatsApp requires opt-in). 10-digit Indian numbers get `+91` automatically. Email is always sent too, and a WhatsApp failure never blocks a booking.
 
 </details>
 
@@ -336,11 +424,16 @@ Both of these are free and optional, but recommended before going live:
 
 ## ✦ Customizing the content
 
-Everything business-specific lives in **two files**, so the site can be rebranded quickly.
+Everything business-specific lives in a few files in [`data/`](data), so the site can be rebranded quickly.
 
 | What | Where |
 |:--|:--|
 | Menu items, prices, bestsellers, new sections (e.g. food) | [`data/menu.ts`](data/menu.ts) |
+| Veg / non-veg / egg mark, Jain and vegan labels, allergens | [`data/menu.ts`](data/menu.ts) → `diet`, `tags`, `allergens` on each item (filter buttons appear for labels that are used) |
+| Events (live music, workshops) | [`data/events.ts`](data/events.ts). Past events hide themselves. In demo mode, two clearly marked sample events are shown until you add real ones |
+| Instagram, Google reviews, Swiggy and Zomato links, Google rating | [`data/site.ts`](data/site.ts) → `online`. Each appears only once it's set |
+| Guest reviews on the home page | [`data/site.ts`](data/site.ts) → `testimonials` (real reviews only, quoted word for word) |
+| Gujarati and Hindi wording | [`data/translations.ts`](data/translations.ts). Menu item names, legal pages, emails and form error messages stay in English |
 | Concept banner (turn off for a real café) | [`data/site.ts`](data/site.ts) → `demo.enabled` |
 | Name, contact details, address, map coordinates | [`data/site.ts`](data/site.ts) → `contact`, `location` |
 | Opening hours and last booking time | [`data/site.ts`](data/site.ts) → `hours` |
@@ -380,18 +473,29 @@ app/
 ├── layout.tsx                  Fonts, metadata, Open Graph
 ├── globals.css                 Design tokens + component styles
 ├── api/reservations/route.ts   Validate → Sheet → Emails
+├── api/notify/route.ts         Called by the sheet: status emails & reminders
+├── api/booking/route.ts        Guest change / cancel
+├── booking/[reference]/        "Manage your booking" page (signed link)
+├── events/                     /events
 ├── privacy-policy/             /privacy-policy
 ├── terms-and-conditions/       /terms-and-conditions
 └── sitemap.ts · robots.ts · icon.svg · not-found.tsx
-components/                     Navbar · Hero · About · FeaturedItems · Menu
-                                Reservation · Contact · Footer · LegalPage
+components/                     Navbar · Hero · About · FeaturedItems · Menu · Events
+                                Reservation · Social · Contact · Footer · LegalPage
+                                ManageBooking · Language (EN / ગુ / हि switch)
 data/
-├── menu.ts                     Menu & prices (single source of truth)
+├── menu.ts                     Menu, prices, diet labels (single source of truth)
+├── events.ts                   Events
+├── translations.ts             Gujarati & Hindi interface text
 └── site.ts                     Business settings
 lib/
 ├── validation.ts               Shared client/server validation
 ├── mailer.ts                   Gmail SMTP (server-only)
 ├── email-templates.ts          HTML + plain-text emails
+├── notifications.ts            Guest updates: email + calendar + WhatsApp
+├── booking-token.ts            Signed "Change or cancel" links
+├── ics.ts                      Calendar invites
+├── whatsapp.ts                 WhatsApp Cloud API
 └── sheets.ts                   Google Sheets via Apps Script
 scripts/
 ├── google-apps-script.gs       Paste into the Google Sheet

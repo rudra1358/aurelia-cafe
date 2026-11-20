@@ -13,11 +13,27 @@ export type Price =
   | { kind: "options"; amounts: number[]; labels?: string[] }
   | { kind: "market" };
 
+/** FSSAI-style marking: green dot = vegetarian, red = non-vegetarian, egg = contains egg. */
+export type Diet = "veg" | "nonveg" | "egg";
+/** Extra suitability labels. Only add one when the recipe has actually been checked. */
+export type DietTag = "jain" | "vegan";
+
 export interface MenuItem {
   name: string;
   price: Price;
   bestseller?: boolean;
   description?: string;
+  /**
+   * OWNER TODO for every item: set `diet`, and `tags` / `allergens` where they apply, e.g.
+   *   { name: "Latte", price: fixed(525), diet: "veg", allergens: ["Milk"] }
+   *   { name: "Iced Tea", price: …, diet: "veg", tags: ["jain", "vegan"] }
+   * Items without them simply show no label. The menu's filter buttons appear for each
+   * label that at least one item has, so nothing is ever claimed that hasn't been entered.
+   */
+  diet?: Diet;
+  tags?: DietTag[];
+  /** e.g. ["Milk", "Nuts", "Gluten", "Soy"] */
+  allergens?: string[];
 }
 
 export interface MenuCategory {

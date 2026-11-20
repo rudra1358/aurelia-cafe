@@ -1,10 +1,13 @@
 import { randomBytes } from "node:crypto";
-import { NextResponse } from "next/server";
 import { site } from "@/data/site";
 import { MailConfigError, alertOwnerGuestNotEmailed, assertMailConfigured, sendReservationEmails } from "@/lib/mailer";
 import { markSheetGuestNotEmailed, saveReservationToSheet } from "@/lib/sheets";
 import { isRateLimited, type Limit } from "@/lib/rate-limit";
 import { verifyTurnstile } from "@/lib/turnstile";
+import { clientIp, json, sameOrigin } from "@/lib/http";
+import { formatDate, formatGuests, formatTime } from "@/lib/format";
+import { WHATSAPP_TEMPLATES, whatsappOwner } from "@/lib/whatsapp";
+import { after } from "next/server";
 import { nowInCafeTimeZone, validateReservation } from "@/lib/validation";
 
 /** Short, readable reference such as "AUR-7KQ2XD", used in the sheet and both emails. */
@@ -34,40 +37,6 @@ const LIMITS = {
 } satisfies Record<string, Limit>;
 
 const TOO_MANY = "Too many requests were sent. Please wait a while, or call us to book.";
-
-/** Client IP. On Vercel these headers are set by the platform and can't be spoofed by the visitor. */
-function clientIp(request: Request): string | null {
-  const h = request.headers;
-  return (
-    h.get("x-vercel-forwarded-for")?.split(",")[0]?.trim() ||
-    h.get("x-real-ip")?.trim() ||
-    h.get("x-forwarded-for")?.split(",")[0]?.trim() ||
-    null
-  );
-}
-
-/**
- * Only accept requests from this site's own pages: blocks other websites from posting
- * to the API from a visitor's browser (CSRF) and casual cross-site abuse.
- */
-function sameOrigin(request: Request): boolean {
-  const h = request.headers;
-  if (h.get("sec-fetch-site") === "cross-site") return false;
-  const origin = h.get("origin");
-  if (!origin) return true; // non-browser clients; the other checks still apply
-  let originHost: string;
-  try {
-    originHost = new URL(origin).host;
-  } catch {
-    return false;
-  }
-  const host = h.get("x-forwarded-host")?.split(",")[0]?.trim() || h.get("host");
-  return originHost === host;
-}
-
-function json(body: unknown, status: number) {
-  return NextResponse.json(body, { status, headers: { "Cache-Control": "no-store" } });
-}
 
 export async function POST(request: Request) {
   if (!sameOrigin(request)) {
@@ -169,6 +138,19 @@ export async function POST(request: Request) {
     console.error(`[reservations] ${reference} reached nobody (sheet ${sheet.status}, owner email failed):`, err);
     return json({ ok: false, error: "We couldn’t send your request just now, so it hasn’t reached us." }, 502);
   }
+
+  // Owner WhatsApp alert (optional), sent after the response so the guest doesn't wait.
+  const r = result.data;
+  after(() =>
+    whatsappOwner(WHATSAPP_TEMPLATES.ownerNewBooking, [
+      r.event ? `${r.name} (${r.event})` : r.name,
+      formatGuests(r.guests),
+      formatDate(r.date),
+      formatTime(r.time),
+      r.phone,
+      reference,
+    ]),
+  );
 
   // The booking reached the owner, but the guest's confirmation email didn't go out.
   if (!sent.guest) {

@@ -103,7 +103,38 @@ export const site = {
      * active request on that date within this many minutes (so 7:00 and 7:15 count as one).
      */
     duplicateWindowMinutes: 60,
+    /** Length of the calendar event attached to confirmation emails (.ics). */
+    calendarMinutes: 90,
   },
+
+  /**
+   * Links shown in the "Find us online" strip of the Contact section and the footer.
+   * OWNER TODO: fill in the real URLs. Anything left as null is simply not shown —
+   * the site never invents a profile, rating or review.
+   */
+  online: {
+    /** e.g. "https://www.instagram.com/aurelia.cafe/" */
+    instagram: null as string | null,
+    /** Google Maps / Business Profile reviews link, e.g. "https://g.page/r/…/review" */
+    googleReviews: null as string | null,
+    /** Restaurant page on Swiggy, e.g. "https://www.swiggy.com/restaurants/…" */
+    swiggy: null as string | null,
+    /** Restaurant page on Zomato, e.g. "https://www.zomato.com/ahmedabad/…" */
+    zomato: null as string | null,
+    /**
+     * Google rating as shown on the Business Profile. Only set real, current numbers,
+     * e.g. { value: 4.6, count: 312 }.
+     */
+    googleRating: null as { value: number; count: number } | null,
+  },
+
+  /**
+   * Guest reviews shown on the home page. Only add real reviews, quoted word for word,
+   * with the reviewer's permission (e.g. copied from Google reviews). Empty = section hidden.
+   */
+  testimonials: [
+    // { quote: "…", author: "Priya S.", source: "Google review" },
+  ] as { quote: string; author: string; source?: string }[],
 
   legal: {
     lastUpdated: "19 November 2026",
