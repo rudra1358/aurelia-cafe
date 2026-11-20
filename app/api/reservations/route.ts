@@ -1,7 +1,8 @@
 import { randomBytes } from "node:crypto";
 import { NextResponse } from "next/server";
-import { MailConfigError, assertMailConfigured, sendReservationEmails } from "@/lib/mailer";
-import { markSheetEmailFailed, saveReservationToSheet } from "@/lib/sheets";
+import { site } from "@/data/site";
+import { MailConfigError, alertOwnerGuestNotEmailed, assertMailConfigured, sendReservationEmails } from "@/lib/mailer";
+import { markSheetGuestNotEmailed, saveReservationToSheet } from "@/lib/sheets";
 import { isRateLimited, type Limit } from "@/lib/rate-limit";
 import { verifyTurnstile } from "@/lib/turnstile";
 import { nowInCafeTimeZone, validateReservation } from "@/lib/validation";
@@ -140,19 +141,40 @@ export async function POST(request: Request) {
   const { date, time } = nowInCafeTimeZone();
   const sheet = await saveReservationToSheet({ ...result.data, reference, submittedAt: `${date} ${time}` });
 
-  // Same guest, same date and time, still active: don't create a second row or resend emails.
+  // Same guest (email or phone) already has an active request near that time: don't create a
+  // second row or resend emails. This also stops a retry after a failed guest email reaching the owner twice.
   if (sheet.status === "duplicate") {
-    return json({ ok: true, duplicate: true, reference: sheet.existingReference }, 200);
+    return json({ ok: true, duplicate: true, reference: sheet.existing?.reference, existing: sheet.existing }, 200);
   }
 
-  // 2. Email the owner and the guest. The owner email says whether the sheet save worked.
+  // That time already has as many guests as the café takes online.
+  if (sheet.status === "full") {
+    return json(
+      {
+        ok: false,
+        errors: {
+          time: `This time is fully booked online. Please choose another time, or call us on ${site.contact.phoneDisplay}.`,
+        },
+      },
+      422,
+    );
+  }
+
+  // 2. Email the owner, then the guest. The owner email says whether the sheet save worked.
+  let sent;
   try {
-    await sendReservationEmails(result.data, { reference, submittedAt: now, sheet: sheet.status });
+    sent = await sendReservationEmails(result.data, { reference, submittedAt: now, sheet: sheet.status });
   } catch (err) {
-    console.error(`[reservations] Failed to send emails for ${reference}:`, err);
-    // The row exists but nobody was emailed — flag it so the owner sees it in the sheet.
-    if (sheet.status === "saved") await markSheetEmailFailed(reference);
+    // Only thrown when the sheet save failed AND the owner email failed: nothing reached the owner.
+    console.error(`[reservations] ${reference} reached nobody (sheet ${sheet.status}, owner email failed):`, err);
     return json({ ok: false, error: "We couldn’t send your request just now, so it hasn’t reached us." }, 502);
+  }
+
+  // The booking reached the owner, but the guest's confirmation email didn't go out.
+  if (!sent.guest) {
+    if (sheet.status === "saved") await markSheetGuestNotEmailed(reference);
+    else alertOwnerGuestNotEmailed(result.data, reference);
+    return json({ ok: true, reference, emailFailed: true }, 200);
   }
 
   return json({ ok: true, reference }, 200);

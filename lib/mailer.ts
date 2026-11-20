@@ -208,18 +208,21 @@ async function deliver(cfg: MailConfig, message: Omit<SendMailOptions, "from">, 
 }
 
 export interface SendResult {
-  guest: Label;
+  /** null when the guest's confirmation could not be sent. The booking has still reached the owner. */
+  guest: Label | null;
   /** null when the owner email was skipped (OWNER_NOTIFY=off) or could not be sent but the booking is in the sheet. */
   owner: Label | null;
 }
 
 /**
- * Sends the reservation emails.
- * - The guest email is required: if it can't be sent through any account, this throws
- *   so the visitor sees an error.
+ * Sends the reservation emails, owner first, so the guest is only told "received" once
+ * the booking has reached the owner (in the sheet or by email).
  * - The owner email is sent for every booking (OWNER_NOTIFY=each, default), or — with
  *   OWNER_NOTIFY=off — only when the booking could NOT be saved to the Google Sheet.
- *   If it fails while the booking is safely in the sheet, the guest still gets success.
+ *   If the sheet save failed, this email is the only record: if it can't be sent, this
+ *   throws and the guest email is not sent, so the visitor sees an error.
+ * - If the guest email fails, the booking has still reached the owner, so this does NOT
+ *   throw: it returns guest = null and the caller tells the visitor and the owner.
  */
 export async function sendReservationEmails(
   r: Reservation,
@@ -246,19 +249,55 @@ export async function sendReservationEmails(
   }
 
   const c = customerEmail(r, meta.reference);
-  const guest = await deliver(
-    cfg,
-    {
-      to: { name: r.name, address: r.email },
-      replyTo: { name: site.name, address: cfg.owner },
-      subject: c.subject,
-      text: c.text,
-      html: c.html,
-    },
-    `Guest email for ${meta.reference}`,
-  );
+  let guest: Label | null = null;
+  try {
+    guest = await deliver(
+      cfg,
+      {
+        to: { name: r.name, address: r.email },
+        replyTo: { name: site.name, address: cfg.owner },
+        subject: c.subject,
+        text: c.text,
+        html: c.html,
+      },
+      `Guest email for ${meta.reference}`,
+    );
+  } catch {
+    console.error(`[mail] Guest email for ${meta.reference} not sent; the booking has reached the owner.`);
+  }
 
   return { guest, owner };
+}
+
+/**
+ * Tells the owner that a guest never got their confirmation email, so they should contact
+ * the guest directly. Used when the booking isn't in the sheet (there it is marked instead).
+ * Best effort, sent after the response.
+ */
+export function alertOwnerGuestNotEmailed(r: Reservation, reference: string): void {
+  const cfg = readConfig();
+  const text = [
+    `The confirmation email to the guest for booking ${reference} could not be sent.`,
+    `The booking itself reached you in the earlier "New Table Reservation" email.`,
+    "",
+    `Please contact ${r.name} directly: ${r.phone} · ${r.email}`,
+  ].join("\n");
+  const send = async () => {
+    try {
+      await deliver(
+        cfg,
+        { to: cfg.owner, subject: `[${site.name}] Guest not emailed — please contact them (${reference})`, text },
+        `Owner alert for ${reference}`,
+      );
+    } catch {
+      // Already logged by deliver(); the owner still has the booking email.
+    }
+  };
+  try {
+    after(send); // runs once the response has been sent
+  } catch {
+    void send(); // outside a request (e.g. scripts)
+  }
 }
 
 /** Checks the primary SMTP login without sending anything. */

@@ -80,6 +80,29 @@ export const site = {
     maxNotesLength: 500,
     /** How far ahead a request may be made (catches typos such as year 2062). */
     maxDaysAhead: 365,
+    /** Requests are in steps of this many minutes from midnight (10:00, 10:15, 10:30 …). */
+    slotMinutes: 15,
+    /** Days closed every week: 0 = Sunday, 1 = Monday … 6 = Saturday. Example: [1] = closed on Mondays. */
+    closedWeekdays: [] as number[],
+    /**
+     * Dates closed for holidays or private events (YYYY-MM-DD). Add `until` to close a range
+     * of days (inclusive). The reason is shown to guests who pick that date.
+     */
+    blackoutDates: [
+      // { date: "2027-01-26", reason: "Republic Day" },
+      // { date: "2027-10-28", until: "2027-10-30", reason: "Diwali" },
+    ] as { date: string; until?: string; reason?: string }[],
+    /**
+     * Online capacity, counted from the active rows in the Google Sheet (needs the sheet).
+     * A request is turned away when the guests already booked within `windowMinutes`
+     * of the chosen time, plus this party, would exceed `maxGuests`. Set to null to turn off.
+     */
+    capacity: { maxGuests: 30, windowMinutes: 30 } as { maxGuests: number; windowMinutes: number } | null,
+    /**
+     * A request is treated as a duplicate when the same email OR phone number already has an
+     * active request on that date within this many minutes (so 7:00 and 7:15 count as one).
+     */
+    duplicateWindowMinutes: 60,
   },
 
   legal: {

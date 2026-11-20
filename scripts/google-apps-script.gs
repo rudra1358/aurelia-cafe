@@ -9,14 +9,17 @@
  * What it handles:
  *  - Writes each value under its column NAME, so the owner can reorder columns safely
  *    (renamed/deleted required columns are re-created at the end of the header row).
- *  - Skips duplicate requests (same email + date + time that is still active).
- *  - Lets the website mark a row "Email failed" if the emails could not be sent.
+ *  - Skips duplicate requests: the same email OR phone with an active request on that date
+ *    within an hour (the website sends the window, see data/site.ts → duplicateWindowMinutes).
+ *  - Turns a request away when that time is full (data/site.ts → capacity), counting the
+ *    guests of active rows on the same date.
+ *  - Lets the website mark a row "Guest not emailed" if the guest's confirmation email failed.
  *  - Two requests at the same moment are serialised with LockService.
  *  - archiveOldReservations(): moves past years' rows into "Archive <year>" tabs.
  */
 
 // Must exactly match GOOGLE_SHEETS_SECRET in the website's environment variables.
-const SECRET = "PASTE_YOUR_SECRET_HERE";
+const SECRET = "C7fvqv3SCqCG3_I3omnR17ybuTNQp39W";
 
 const SHEET_NAME = "Reservations";
 const COLUMNS = {
@@ -32,11 +35,14 @@ const COLUMNS = {
   notes: "Special requests",
 };
 const HEADERS = Object.keys(COLUMNS).map(function (k) { return COLUMNS[k]; });
-const STATUSES = ["Pending", "Confirmed", "Declined", "Cancelled", "Completed", "No-show", "Email failed"];
-/** Rows with these statuses don't block a new request for the same email/date/time. */
+const STATUSES = ["Pending", "Guest not emailed", "Confirmed", "Declined", "Cancelled", "Completed", "No-show", "Email failed"];
+/**
+ * Rows with these statuses don't count as duplicates or towards capacity.
+ * ("Email failed" is from older versions of this script; "Guest not emailed" is still an active booking.)
+ */
 const INACTIVE = ["Declined", "Cancelled", "Email failed"];
-/** How many recent rows to check for duplicates (keeps it fast on big sheets). */
-const DUPLICATE_SCAN_ROWS = 500;
+/** How many recent rows to check for duplicates and capacity (keeps it fast; use the yearly archive). */
+const SCAN_ROWS = 5000;
 
 // ───────────────────────── Web app entry points ─────────────────────────
 
@@ -47,7 +53,7 @@ function doPost(e) {
   } catch (err) {
     return respond({ ok: false, error: "invalid json" });
   }
-  if (!SECRET || SECRET === "PASTE_YOUR_SECRET_HERE" || body.secret !== SECRET) {
+  if (!SECRET || SECRET === "C7fvqv3SCqCG3_I3omnR17ybuTNQp39W" || body.secret !== SECRET) {
     return respond({ ok: false, error: "unauthorized" });
   }
 
@@ -59,8 +65,10 @@ function doPost(e) {
   }
 
   try {
-    if (body.action === "markEmailFailed") return respond(markEmailFailed(String(body.reference || "")));
-    return respond(addReservation(body.reservation));
+    if (body.action === "markGuestNotEmailed" || body.action === "markEmailFailed") {
+      return respond(markGuestNotEmailed(String(body.reference || "")));
+    }
+    return respond(addReservation(body.reservation, body.rules || {}));
   } catch (err) {
     console.error(err);
     return respond({ ok: false, error: String(err) });
@@ -76,14 +84,41 @@ function doGet() {
 
 // ───────────────────────── Actions ─────────────────────────
 
-function addReservation(r) {
+/**
+ * rules (sent by the website):
+ *   duplicateWindowMinutes: number          — same email/phone within this many minutes = duplicate
+ *   capacity: { maxGuests, windowMinutes }  — or null for no limit
+ */
+function addReservation(r, rules) {
   if (!r || !r.reference) return { ok: false, error: "missing reservation" };
 
   const sheet = getSheet();
   const cols = columnIndex(sheet);
+  const sameDay = activeRowsOn(sheet, cols, String(r.date));
+  const minutes = toMinutes(String(r.time));
 
-  const existing = findActiveDuplicate(sheet, cols, r);
-  if (existing) return { ok: true, duplicate: true, reference: existing };
+  // 1. Duplicate: same guest (email or phone) close to the same time.
+  const dupWindow = Number(rules.duplicateWindowMinutes) || 0;
+  const email = String(r.email).trim().toLowerCase();
+  const phone = phoneKey(r.phone);
+  for (let i = sameDay.length - 1; i >= 0; i--) {
+    const row = sameDay[i];
+    const sameGuest = row.email === email || (phone && row.phone === phone);
+    if (sameGuest && row.minutes !== null && Math.abs(row.minutes - minutes) <= dupWindow) {
+      return { ok: true, duplicate: true, reference: row.reference, date: String(r.date), time: row.time };
+    }
+  }
+
+  // 2. Capacity: guests already booked near this time, plus this party.
+  const cap = rules.capacity;
+  if (cap && Number(cap.maxGuests) > 0) {
+    const windowMinutes = Number(cap.windowMinutes) || 0;
+    let booked = 0;
+    sameDay.forEach(function (row) {
+      if (row.minutes !== null && Math.abs(row.minutes - minutes) < Math.max(windowMinutes, 1)) booked += row.guests;
+    });
+    if (booked + (Number(r.guests) || 0) > Number(cap.maxGuests)) return { ok: true, full: true };
+  }
 
   const row = new Array(sheet.getLastColumn()).fill("");
   const values = {
@@ -105,7 +140,7 @@ function addReservation(r) {
   return { ok: true, duplicate: false, reference: r.reference };
 }
 
-function markEmailFailed(reference) {
+function markGuestNotEmailed(reference) {
   if (!reference) return { ok: false, error: "missing reference" };
   const sheet = getSheet();
   const cols = columnIndex(sheet);
@@ -114,7 +149,7 @@ function markEmailFailed(reference) {
   const refs = sheet.getRange(2, cols.reference, last - 1, 1).getDisplayValues();
   for (let i = refs.length - 1; i >= 0; i--) {
     if (refs[i][0] === reference) {
-      sheet.getRange(i + 2, cols.status).setValue("Email failed");
+      sheet.getRange(i + 2, cols.status).setValue("Guest not emailed");
       return { ok: true };
     }
   }
@@ -223,8 +258,16 @@ function columnIndex(sheet) {
 function formatColumns(sheet, cols) {
   const rows = Math.max(sheet.getMaxRows() - 1, 1);
   const statusRange = sheet.getRange(2, cols.status, rows, 1);
-  if (!statusRange.getDataValidation()) {
-    const rule = SpreadsheetApp.newDataValidation().requireValueInList(STATUSES, true).setAllowInvalid(true).build();
+  const current = statusRange.getDataValidation();
+  const list =
+    current && current.getCriteriaType() === SpreadsheetApp.DataValidationCriteria.VALUE_IN_LIST
+      ? current.getCriteriaValues()[0]
+      : null;
+  // Create the dropdown, or add statuses from a newer script version without removing the owner's own.
+  const missing = STATUSES.filter(function (s) { return !list || list.indexOf(s) === -1; });
+  if (!list || missing.length) {
+    const values = (list || []).concat(missing);
+    const rule = SpreadsheetApp.newDataValidation().requireValueInList(values, true).setAllowInvalid(true).build();
     statusRange.setDataValidation(rule);
   }
   [cols.phone, cols.date, cols.time].forEach(function (c) {
@@ -233,26 +276,41 @@ function formatColumns(sheet, cols) {
   });
 }
 
-/** Returns the Reference of a still-active row with the same email + date + time, or "". */
-function findActiveDuplicate(sheet, cols, r) {
+/** Active rows (status not in INACTIVE) whose Date is `date`, from the most recent SCAN_ROWS rows. */
+function activeRowsOn(sheet, cols, date) {
   const last = sheet.getLastRow();
-  if (last < 2) return "";
-  const start = Math.max(2, last - DUPLICATE_SCAN_ROWS + 1);
+  if (last < 2) return [];
+  const start = Math.max(2, last - SCAN_ROWS + 1);
   const n = last - start + 1;
   const get = function (c) { return sheet.getRange(start, c, n, 1).getDisplayValues(); };
-  const refs = get(cols.reference), emails = get(cols.email), dates = get(cols.date), times = get(cols.time), statuses = get(cols.status);
-  const email = String(r.email).trim().toLowerCase();
-  for (let i = n - 1; i >= 0; i--) {
-    if (
-      emails[i][0].trim().toLowerCase() === email &&
-      dates[i][0] === String(r.date) &&
-      times[i][0] === String(r.time) &&
-      INACTIVE.indexOf(statuses[i][0]) === -1
-    ) {
-      return refs[i][0];
-    }
+  const dates = get(cols.date);
+  const refs = get(cols.reference), emails = get(cols.email), phones = get(cols.phone);
+  const times = get(cols.time), guests = get(cols.guests), statuses = get(cols.status);
+  const rows = [];
+  for (let i = 0; i < n; i++) {
+    if (dates[i][0] !== date || INACTIVE.indexOf(statuses[i][0].trim()) !== -1) continue;
+    rows.push({
+      reference: refs[i][0],
+      email: emails[i][0].trim().toLowerCase(),
+      phone: phoneKey(phones[i][0]),
+      time: times[i][0],
+      minutes: toMinutes(times[i][0]),
+      guests: parseInt(guests[i][0], 10) || 0,
+    });
   }
-  return "";
+  return rows;
+}
+
+/** "19:30" → 1170, or null if the cell isn't a time. */
+function toMinutes(hhmm) {
+  const m = /^(\d{1,2}):(\d{2})/.exec(String(hhmm).trim());
+  return m ? Number(m[1]) * 60 + Number(m[2]) : null;
+}
+
+/** Last 10 digits, so "+91 98765 43210" and "098765-43210" match. "" if too short. */
+function phoneKey(phone) {
+  const digits = String(phone || "").replace(/\D/g, "");
+  return digits.length >= 10 ? digits.slice(-10) : "";
 }
 
 /** Stop text that starts with = + - @ being treated as a formula. */

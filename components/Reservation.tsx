@@ -6,9 +6,11 @@ import Script from "next/script";
 import { Check, ChevronDown, CircleAlert, Clock, Info, LoaderCircle } from "lucide-react";
 import cheers from "@/public/images/cheers.jpg";
 import { site, telHref } from "@/data/site";
-import { formatTime } from "@/lib/format";
+import { formatDate, formatTime } from "@/lib/format";
 import {
   addDays,
+  closedDateMessage,
+  closedWeekdaysText,
   nowInCafeTimeZone,
   reservationFields,
   validateReservation,
@@ -46,6 +48,10 @@ export default function Reservation() {
     email: string;
     duplicate?: boolean;
     reference?: string;
+    /** For a duplicate: when the existing request is for. */
+    existing?: { date?: string; time?: string };
+    /** The request reached us, but the guest's confirmation email failed. */
+    emailFailed?: boolean;
   } | null>(null);
   const [minDate, setMinDate] = useState<string>();
   const inFlight = useRef(false);
@@ -59,8 +65,19 @@ export default function Reservation() {
   const turnstileFailed = useRef(false);
   const [turnstileReady, setTurnstileReady] = useState(false);
 
-  // Computed on the client to avoid a server/client date mismatch during hydration.
-  useEffect(() => setMinDate(nowInCafeTimeZone().date), []);
+  // Computed on the client to avoid a server/client date mismatch during hydration, and kept
+  // current so a tab left open past midnight doesn't offer yesterday.
+  useEffect(() => {
+    const refresh = () => setMinDate(nowInCafeTimeZone().date);
+    refresh();
+    const timer = window.setInterval(refresh, 60_000);
+    const onVisible = () => document.visibilityState === "visible" && refresh();
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, []);
   useEffect(() => {
     if (status === "success") successRef.current?.focus();
   }, [status]);
@@ -106,7 +123,10 @@ export default function Reservation() {
   const onChange = (field: ReservationField) => (e: ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
     const value = e.target.value;
     setValues((v) => ({ ...v, [field]: value }));
-    if (errors[field]) setErrors((er) => ({ ...er, [field]: undefined }));
+    // Tell the visitor straight away when they pick a day the café is closed.
+    const closed = field === "date" && value ? closedDateMessage(value) : null;
+    if (closed) setErrors((er) => ({ ...er, date: closed }));
+    else if (errors[field]) setErrors((er) => ({ ...er, [field]: undefined }));
     if (status === "error") setStatus("idle");
   };
 
@@ -149,8 +169,15 @@ export default function Reservation() {
           turnstileToken: turnstileToken.current,
         }),
       });
-      const data: { ok?: boolean; error?: string; errors?: ReservationErrors; duplicate?: boolean; reference?: string } =
-        await res.json().catch(() => ({}));
+      const data: {
+        ok?: boolean;
+        error?: string;
+        errors?: ReservationErrors;
+        duplicate?: boolean;
+        reference?: string;
+        existing?: { date?: string; time?: string };
+        emailFailed?: boolean;
+      } = await res.json().catch(() => ({}));
 
       if (res.ok && data.ok) {
         setSubmitted({
@@ -158,6 +185,8 @@ export default function Reservation() {
           email: check.data.email,
           duplicate: !!data.duplicate,
           reference: data.reference,
+          existing: data.existing,
+          emailFailed: !!data.emailFailed,
         });
         setValues(empty);
         setErrors({});
@@ -198,7 +227,8 @@ export default function Reservation() {
     ) : null;
 
   const loading = status === "submitting";
-  const { maxGuests, maxNotesLength, maxDaysAhead } = site.reservations;
+  const { maxGuests, maxNotesLength, maxDaysAhead, slotMinutes } = site.reservations;
+  const closedText = closedWeekdaysText();
 
   return (
     <section className="sec res" id="reservation" aria-labelledby="res-title">
@@ -256,9 +286,19 @@ export default function Reservation() {
               <h3>Thank you, {submitted.firstName}.</h3>
               {submitted.duplicate ? (
                 <p>
-                  We already have your request for this date and time
-                  {submitted.reference ? ` (reference ${submitted.reference})` : ""}, so there’s no need to send it again.
-                  Its summary was sent to <strong style={{ fontWeight: 500, color: "#FAF9F6" }}>{submitted.email}</strong>.
+                  We already have your request
+                  {submitted.existing?.date && submitted.existing?.time
+                    ? ` for ${formatDate(submitted.existing.date)} at ${formatTime(submitted.existing.time)}`
+                    : " for around this time"}
+                  {submitted.reference ? ` (reference ${submitted.reference})` : ""}, so there’s no need to send it again. To
+                  change it, please call us on <a href={telHref}>{site.contact.phoneDisplay}</a>.
+                </p>
+              ) : submitted.emailFailed ? (
+                <p>
+                  Your reservation request has been received
+                  {submitted.reference ? ` (reference ${submitted.reference})` : ""}, but we couldn’t send the confirmation
+                  email to <strong style={{ fontWeight: 500, color: "#FAF9F6" }}>{submitted.email}</strong>. There’s no need to
+                  send it again — our team will contact you by phone.
                 </p>
               ) : (
                 <p>
@@ -311,9 +351,15 @@ export default function Reservation() {
                       required
                       min={minDate}
                       max={minDate ? addDays(minDate, maxDaysAhead) : undefined}
-                      {...a11y("date")}
+                      onFocus={() => setMinDate(nowInCafeTimeZone().date)}
+                      {...a11y("date", closedText ? "r-date-hint" : undefined)}
                     />
                     {err("date")}
+                    {closedText && (
+                      <p className="fhint" id="r-date-hint">
+                        {closedText}
+                      </p>
+                    )}
                   </div>
                   <div className={fieldClass("time")}>
                     <label htmlFor="r-time">Preferred time</label>
@@ -323,12 +369,12 @@ export default function Reservation() {
                       required
                       min={site.hours.open}
                       max={site.hours.lastReservation}
-                      step={900}
+                      step={slotMinutes * 60}
                       {...a11y("time", "r-time-hint")}
                     />
                     {err("time")}
                     <p className="fhint" id="r-time-hint">
-                      {formatTime(site.hours.open)} – {formatTime(site.hours.lastReservation)}
+                      {formatTime(site.hours.open)} – {formatTime(site.hours.lastReservation)}, every {slotMinutes} minutes
                     </p>
                   </div>
                   <div className={fieldClass("guests", "span2")}>

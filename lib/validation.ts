@@ -54,6 +54,43 @@ export function addDays(isoDate: string, days: number): string {
   return d.toISOString().slice(0, 10);
 }
 
+const WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+
+/** "19:30" → 1170 */
+export function toMinutes(hhmm: string): number {
+  const [h, m] = hhmm.split(":").map(Number);
+  return h * 60 + m;
+}
+
+/** Why the café is closed on this date (YYYY-MM-DD), as a message for the guest, or null if open. */
+export function closedDateMessage(date: string): string | null {
+  const { blackoutDates, closedWeekdays } = site.reservations;
+  const blackout = blackoutDates.find((b) => date >= b.date && date <= (b.until ?? b.date));
+  if (blackout) {
+    return blackout.reason
+      ? `We’re closed on this date (${blackout.reason}). Please choose another day.`
+      : "We’re closed on this date. Please choose another day.";
+  }
+  const weekday = new Date(`${date}T00:00:00Z`).getUTCDay();
+  if (closedWeekdays.includes(weekday)) return `We’re closed on ${WEEKDAYS[weekday]}s. Please choose another day.`;
+  return null;
+}
+
+/** "Closed on Mondays and Tuesdays." for the form hint, or "" when open every day. */
+export function closedWeekdaysText(): string {
+  const days = [...site.reservations.closedWeekdays].sort().map((d) => `${WEEKDAYS[d]}s`);
+  if (days.length === 0) return "";
+  const list = days.length === 1 ? days[0] : `${days.slice(0, -1).join(", ")} and ${days[days.length - 1]}`;
+  return `Closed on ${list}.`;
+}
+
+/** "7:00 pm, 7:15 pm" — two valid example times for error messages. */
+function slotExample(): string {
+  const { slotMinutes } = site.reservations;
+  const fmt = (mins: number) => formatTime(`${String(Math.floor(mins / 60)).padStart(2, "0")}:${String(mins % 60).padStart(2, "0")}`);
+  return `${fmt(19 * 60)}, ${fmt(19 * 60 + slotMinutes)}`;
+}
+
 function str(v: unknown): string {
   return typeof v === "string" ? v : typeof v === "number" ? String(v) : "";
 }
@@ -63,7 +100,7 @@ export function validateReservation(
   now: { date: string; time: string } = nowInCafeTimeZone(),
 ): ValidationResult {
   const src = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
-  const { maxGuests, maxNotesLength, maxDaysAhead } = site.reservations;
+  const { maxGuests, maxNotesLength, maxDaysAhead, slotMinutes } = site.reservations;
   const errors: ReservationErrors = {};
 
   const name = str(src.name).trim().replace(/\s+/g, " ");
@@ -88,12 +125,17 @@ export function validateReservation(
     errors.date = "Please choose a valid date.";
   else if (date < now.date) errors.date = "Please choose today or a future date.";
   else if (date > addDays(now.date, maxDaysAhead)) errors.date = "Please choose a date within the next year.";
+  else {
+    const closed = closedDateMessage(date);
+    if (closed) errors.date = closed;
+  }
 
   const time = str(src.time).trim();
   if (!time) errors.time = "Please choose a preferred time.";
   else if (!TIME_RE.test(time)) errors.time = "Please choose a valid time.";
   else if (time < site.hours.open || time > site.hours.lastReservation)
     errors.time = `Please choose a time between ${formatTime(site.hours.open)} and ${formatTime(site.hours.lastReservation)}.`;
+  else if (toMinutes(time) % slotMinutes !== 0) errors.time = `Please choose a time in ${slotMinutes}-minute steps (for example ${slotExample()}).`;
   else if (!errors.date && date === now.date && time <= now.time) errors.time = "Please choose a time later today.";
 
   const guestsRaw = str(src.guests).trim();

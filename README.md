@@ -154,12 +154,12 @@ sequenceDiagram
     Site->>API: POST request
     API->>API: Re-validates · honeypot · rate limit
     API->>Sheet: Adds a row (reference, status "Pending")
-    Sheet-->>API: …or "duplicate" if the same guest already asked for that slot
+    Sheet-->>API: …or "duplicate" (same email or phone within an hour) or "full"
     API->>Gmail: Email 2: "New Table Reservation"
     Gmail-->>Owner: Details + Reply / Call buttons
     API->>Gmail: Email 1: "Your Reservation Request"
     Gmail-->>Guest: Acknowledgement (not yet confirmed)
-    API-->>Site: Success only after both emails send
+    API-->>Site: Success once the booking has reached the owner
     Owner->>Guest: Contacts guest to confirm
     Owner->>Sheet: Updates Status → Confirmed
 ```
@@ -167,7 +167,7 @@ sequenceDiagram
 > [!NOTE]
 > A submission is a reservation **request**, not a confirmed booking. The guest is told this on the form, on the success screen and in their email.
 > If the Google Sheet can't be reached, the emails still go out, and the owner email shows a red note so the row can be added by hand.
-> If the emails fail after the row is saved, the row is marked **Email failed** so the owner still sees it.
+> If the guest's confirmation email fails but the booking reached the owner (in the sheet or by email), the guest is told "received, but the confirmation email failed", and the row is marked **Guest not emailed** (or the owner gets a short follow-up email) so they phone the guest. A retry is caught as a duplicate, so the owner never gets it twice.
 
 <br>
 
@@ -262,8 +262,9 @@ npm run dev                    # → http://localhost:3000
 
 **What the script handles**
 - **Columns by name:** you can reorder columns or add your own (e.g. "Table", "Notes from staff"). If you rename or delete a required column, it's added back at the end.
-- **Duplicates:** the same email, date and time with an active status isn't added twice, and no second set of emails is sent.
-- **Email failures:** if the emails can't be sent, the row's status becomes **Email failed**.
+- **Duplicates:** a request from the same email **or** phone number, on the same date and within 60 minutes of an active request (e.g. 7:00 and 7:15), isn't added again and no second set of emails is sent. Change the window with `duplicateWindowMinutes` in `data/site.ts`.
+- **Capacity:** a request is turned away ("this time is fully booked online") when the guests of active rows within 30 minutes of the chosen time, plus the new party, would go over 30. Set `capacity` in `data/site.ts` (or `null` to turn it off). It only counts online requests in the sheet, not walk-ins or phone bookings, and is skipped if the sheet can't be reached.
+- **Email failures:** if the guest's confirmation email can't be sent, the row's status becomes **Guest not emailed** — the booking is still real, so phone the guest.
 - **Simultaneous bookings:** handled one at a time with `LockService`.
 - **Yearly archive:** in the Apps Script editor, run `installYearlyArchive` once (▶ Run). After that, rows from past years move to an `Archive <year>` tab automatically every January. You can also run `archiveOldReservations` by hand at any time.
 
@@ -296,7 +297,7 @@ Two settings raise the daily ceiling. They can be combined:
 | Gmail + Brevo free backup | 2 | ~400 (≈250 Gmail + ≈150 Brevo) |
 | Gmail + Brevo free backup + `OWNER_NOTIFY=off` | 1 | ~800 |
 
-**How the backup works:** every email goes through Gmail first. If Gmail rejects it, the same email is retried through the backup. If Gmail says it's over its daily limit, the server skips Gmail and sends straight through the backup for the next hour. The guest only sees an error if **both** providers fail. Then the row is marked **Email failed**.
+**How the backup works:** every email goes through Gmail first. If Gmail rejects it, the same email is retried through the backup. If Gmail says it's over its daily limit, the server skips Gmail and sends straight through the backup for the next hour. If **both** providers fail for the guest email, the row is marked **Guest not emailed** and the guest is told their request arrived but the confirmation email didn't.
 
 **With `OWNER_NOTIFY=off`:** you rely on the Google Sheet instead of an email per booking. You still get an email for any booking that couldn't be saved to the sheet, so nothing is missed. If the owner email fails but the booking is in the sheet, the guest still gets their confirmation.
 
@@ -344,6 +345,8 @@ Everything business-specific lives in **two files**, so the site can be rebrande
 | Name, contact details, address, map coordinates | [`data/site.ts`](data/site.ts) → `contact`, `location` |
 | Opening hours and last booking time | [`data/site.ts`](data/site.ts) → `hours` |
 | Guest limit, booking window | [`data/site.ts`](data/site.ts) → `reservations` |
+| Closed weekdays, holidays and private events | [`data/site.ts`](data/site.ts) → `reservations.closedWeekdays`, `reservations.blackoutDates` |
+| Time steps, per-time capacity, duplicate window | [`data/site.ts`](data/site.ts) → `reservations.slotMinutes`, `capacity`, `duplicateWindowMinutes` |
 | Cancellation, late-arrival and tax policy | [`data/site.ts`](data/site.ts) → `legal` |
 | Colors and type | [`app/globals.css`](app/globals.css) → `@theme` |
 | Photography | [`public/images/`](public/images) (keep file names, or update the imports) |

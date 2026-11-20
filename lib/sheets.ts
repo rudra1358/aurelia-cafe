@@ -1,18 +1,36 @@
 import "server-only";
+import { site } from "@/data/site";
 import type { Reservation } from "./validation";
 
 /**
  * - "saved":     the row was added to the Google Sheet
- * - "duplicate": the same guest already has an active request for that date and time
+ * - "duplicate": the same guest (email or phone) already has an active request close to that time
+ * - "full":      that time already has as many guests as site.reservations.capacity allows
  * - "disabled":  GOOGLE_SHEETS_WEBHOOK_URL is not set, so saving is switched off
  * - "failed":    saving was attempted but did not succeed (the owner email says so)
  */
-export type SheetStatus = "saved" | "duplicate" | "disabled" | "failed";
+export type SheetStatus = "saved" | "duplicate" | "full" | "disabled" | "failed";
 
 export interface SheetResult {
   status: SheetStatus;
-  /** For "duplicate": the reference of the request that already exists. */
-  existingReference?: string;
+  /** For "duplicate": the request that already exists. */
+  existing?: { reference?: string; date?: string; time?: string };
+}
+
+/** Booking rules applied inside the sheet, where the existing bookings are. */
+function rules() {
+  const { duplicateWindowMinutes, capacity } = site.reservations;
+  return { duplicateWindowMinutes, capacity };
+}
+
+interface SheetReply {
+  ok?: boolean;
+  error?: string;
+  duplicate?: boolean;
+  full?: boolean;
+  reference?: string;
+  date?: string;
+  time?: string;
 }
 
 export interface SheetRow extends Reservation {
@@ -34,7 +52,7 @@ function config(): { url: string; secret: string } | null | "misconfigured" {
 }
 
 /** POSTs to the Apps Script web app. Apps Script answers with a redirect to the result; fetch follows it. */
-async function call(url: string, payload: object): Promise<{ ok?: boolean; error?: string; duplicate?: boolean; reference?: string }> {
+async function call(url: string, payload: object): Promise<SheetReply> {
   const res = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -62,8 +80,11 @@ export async function saveReservationToSheet(row: SheetRow): Promise<SheetResult
   if (cfg === "misconfigured") return { status: "failed" };
 
   try {
-    const data = await call(cfg.url, { secret: cfg.secret, reservation: row });
-    if (data.ok && data.duplicate) return { status: "duplicate", existingReference: data.reference };
+    const data = await call(cfg.url, { secret: cfg.secret, reservation: row, rules: rules() });
+    if (data.ok && data.duplicate) {
+      return { status: "duplicate", existing: { reference: data.reference, date: data.date, time: data.time } };
+    }
+    if (data.ok && data.full) return { status: "full" };
     if (data.ok) return { status: "saved" };
     console.error("[sheets] Google Sheets did not accept the row:", data.error);
     return { status: "failed" };
@@ -74,16 +95,16 @@ export async function saveReservationToSheet(row: SheetRow): Promise<SheetResult
 }
 
 /**
- * Marks a saved row "Email failed" so the owner sees it in the sheet even though the
- * emails never went out. Never throws.
+ * Marks a saved row "Guest not emailed" so the owner knows to contact the guest directly:
+ * the booking is real, but the guest never got their confirmation email. Never throws.
  */
-export async function markSheetEmailFailed(reference: string): Promise<void> {
+export async function markSheetGuestNotEmailed(reference: string): Promise<void> {
   const cfg = config();
   if (!cfg || cfg === "misconfigured") return;
   try {
-    const data = await call(cfg.url, { secret: cfg.secret, action: "markEmailFailed", reference });
-    if (!data.ok) console.error(`[sheets] Could not mark ${reference} as "Email failed":`, data.error);
+    const data = await call(cfg.url, { secret: cfg.secret, action: "markGuestNotEmailed", reference });
+    if (!data.ok) console.error(`[sheets] Could not mark ${reference} as "Guest not emailed":`, data.error);
   } catch (err) {
-    console.error(`[sheets] Could not mark ${reference} as "Email failed":`, err);
+    console.error(`[sheets] Could not mark ${reference} as "Guest not emailed":`, err);
   }
 }
