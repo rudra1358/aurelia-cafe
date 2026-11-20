@@ -485,7 +485,13 @@ function columnIndex(sheet) {
     }
     cols[key] = idx;
   });
-  formatColumns(sheet, cols);
+  // Formatting is a convenience. If the tab has been turned into a Google Sheets *table*
+  // ("typed columns"), Google refuses these changes. Never let that block a booking.
+  try {
+    formatColumns(sheet, cols);
+  } catch (err) {
+    console.warn("Skipped column formatting: " + err + " — if this tab is a table, use Table menu → Convert to range.");
+  }
   return cols;
 }
 
