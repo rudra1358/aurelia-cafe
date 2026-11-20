@@ -280,7 +280,7 @@ npm run dev                    # → http://localhost:3000
 |:--|:--|:--|
 | **Email sending** | A personal Gmail account sends ~500 recipients a day over SMTP (a rolling 24 hours). | See [Handling busy days](#handling-busy-days) below. |
 | **Sheet size** | 10 million cells per spreadsheet, about **1 million bookings**. | The sheet gets slow long before that (~50k+ rows), so use the yearly archive. |
-| **Spam** | n/a | A honeypot field plus a per-IP rate limit (5 requests / 10 min) block bots before they use up your email quota. Add reCAPTCHA if spam becomes a problem. |
+| **Spam** | n/a | A honeypot, optional Cloudflare Turnstile, and rate limits (5 requests / 10 min per IP, 3 a day per email and per phone) stop bots before they use up your email quota. See [Spam protection](#spam-protection). |
 | **Two bookings at once** | n/a | `LockService` writes rows one at a time. |
 | **Double booking** | n/a | Each submission is a *request*. The owner confirms availability, so there's no automatic table allocation. |
 | **Personal data** | n/a | Name, email and phone are stored in the sheet and the inbox. Keep the sheet **private** (don't share it publicly), and follow India's DPDP Act. |
@@ -321,6 +321,13 @@ Two settings raise the daily ceiling. They can be combined:
 Brevo's free plan adds a small Brevo logo to emails, and their limits can change. Check their current plan details.
 
 </details>
+
+### Spam protection
+
+Both of these are free and optional, but recommended before going live:
+
+1. **Cloudflare Turnstile** (a privacy-friendly CAPTCHA replacement, usually invisible). In the [Cloudflare dashboard](https://dash.cloudflare.com) → **Turnstile → Add widget**, add your domain (and `localhost` for testing), then set `NEXT_PUBLIC_TURNSTILE_SITE_KEY` and `TURNSTILE_SECRET_KEY`. Set both or neither. If Cloudflare is ever unreachable, bookings are let through so none are lost, and the rate limits still apply.
+2. **Upstash Redis** for the rate limits. On Vercel, each server instance has its own memory, so in-memory limits are easy to get around. Create a free database at [upstash.com](https://upstash.com) (or Vercel → **Storage → Upstash**) and set `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN`. Only hashed identifiers are stored, never emails or phone numbers.
 
 **Ownership for real clients.** Set everything up on the **client's own** Google account: their Gmail App Password, a sheet in their Drive, and the Apps Script deployed from their account. Ask them for *editor* access so you can maintain it. That way the client owns their data and is never locked out, even if you're unavailable.
 
@@ -419,7 +426,10 @@ Deploy to [Vercel](https://vercel.com/new) (recommended for Next.js) or any Node
 
 - SMTP and sheet credentials are read **only on the server** (`server-only` imports) and never reach the browser.
 - All input is re-validated on the server, and user text is HTML-escaped in emails and protected against spreadsheet formulas in the sheet.
-- A hidden honeypot field and a per-IP limit (5 requests / 10 minutes, in memory) reduce spam. For high traffic, use a shared store instead.
+- Spam and abuse: a hidden honeypot field, optional [Cloudflare Turnstile](#spam-protection), and rate limits per IP (5 / 10 minutes) and per email and phone number (3 / day). The per-email limit stops anyone using the form to flood someone else's inbox. Limits are shared across servers when Upstash Redis is configured.
+- The API accepts only JSON requests from the site's own pages (Origin check), which blocks cross-site form posts.
+- Security headers on every page: Content-Security-Policy, HSTS, `X-Frame-Options: DENY`, `X-Content-Type-Options`, `Referrer-Policy` and `Permissions-Policy` (see `next.config.ts`). If you add a third-party script or embed, add its domain to the CSP there.
+- If Gmail starts failing and emails go through the backup provider, the owner gets an alert email (at most once every 6 hours).
 - No analytics or advertising cookies.
 
 <br>

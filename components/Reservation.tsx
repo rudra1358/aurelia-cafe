@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from "react";
 import Image from "next/image";
+import Script from "next/script";
 import { Check, ChevronDown, CircleAlert, Clock, Info, LoaderCircle } from "lucide-react";
 import cheers from "@/public/images/cheers.jpg";
 import { site, telHref } from "@/data/site";
@@ -17,6 +18,21 @@ import {
 } from "@/lib/validation";
 
 type Status = "idle" | "submitting" | "success" | "error";
+
+/** Cloudflare Turnstile spam check — shown only when a site key is configured. */
+const TURNSTILE_SITE_KEY = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY?.trim() || "";
+const TURNSTILE_SRC = "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit";
+
+interface TurnstileApi {
+  render: (el: HTMLElement, opts: Record<string, unknown>) => string;
+  reset: (id: string) => void;
+  remove: (id: string) => void;
+}
+declare global {
+  interface Window {
+    turnstile?: TurnstileApi;
+  }
+}
 
 const empty: ReservationInput = { name: "", email: "", phone: "", date: "", time: "", guests: "", notes: "" };
 
@@ -36,12 +52,51 @@ export default function Reservation() {
   const formRef = useRef<HTMLFormElement>(null);
   const honeypot = useRef<HTMLInputElement>(null);
   const successRef = useRef<HTMLDivElement>(null);
+  const turnstileBox = useRef<HTMLDivElement>(null);
+  const turnstileId = useRef<string | null>(null);
+  const turnstileToken = useRef("");
+  const [turnstileReady, setTurnstileReady] = useState(false);
 
   // Computed on the client to avoid a server/client date mismatch during hydration.
   useEffect(() => setMinDate(nowInCafeTimeZone().date), []);
   useEffect(() => {
     if (status === "success") successRef.current?.focus();
   }, [status]);
+
+  // Render the Turnstile widget whenever the form is on screen (it unmounts on success).
+  const formShown = status !== "success";
+  useEffect(() => {
+    const el = turnstileBox.current;
+    if (!TURNSTILE_SITE_KEY || !turnstileReady || !formShown || !el || !window.turnstile) return;
+    const api = window.turnstile;
+    const id = api.render(el, {
+      sitekey: TURNSTILE_SITE_KEY,
+      appearance: "interaction-only", // invisible unless Cloudflare needs the visitor to click
+      theme: "light",
+      size: "flexible",
+      callback: (token: string) => {
+        turnstileToken.current = token;
+      },
+      "expired-callback": () => {
+        turnstileToken.current = "";
+      },
+      "error-callback": () => {
+        turnstileToken.current = "";
+      },
+    });
+    turnstileId.current = id;
+    return () => {
+      api.remove(id);
+      turnstileId.current = null;
+      turnstileToken.current = "";
+    };
+  }, [turnstileReady, formShown]);
+
+  /** Tokens are single-use: get a fresh one after every submission attempt. */
+  const resetTurnstile = () => {
+    turnstileToken.current = "";
+    if (turnstileId.current && window.turnstile) window.turnstile.reset(turnstileId.current);
+  };
 
   const onChange = (field: ReservationField) => (e: ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
     const value = e.target.value;
@@ -66,6 +121,12 @@ export default function Reservation() {
       return;
     }
 
+    if (TURNSTILE_SITE_KEY && !turnstileToken.current) {
+      setServerMessage("Our security check hasn’t finished yet. Please wait a few seconds and press the button again.");
+      setStatus("error");
+      return;
+    }
+
     inFlight.current = true;
     setStatus("submitting");
     setServerMessage("");
@@ -73,7 +134,11 @@ export default function Reservation() {
       const res = await fetch("/api/reservations", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...values, company: honeypot.current?.value ?? "" }),
+        body: JSON.stringify({
+          ...values,
+          company: honeypot.current?.value ?? "",
+          turnstileToken: turnstileToken.current,
+        }),
       });
       const data: { ok?: boolean; error?: string; errors?: ReservationErrors; duplicate?: boolean; reference?: string } =
         await res.json().catch(() => ({}));
@@ -103,6 +168,7 @@ export default function Reservation() {
       setStatus("error");
     } finally {
       inFlight.current = false;
+      resetTurnstile();
     }
   }
 
@@ -127,6 +193,9 @@ export default function Reservation() {
 
   return (
     <section className="sec res" id="reservation" aria-labelledby="res-title">
+      {TURNSTILE_SITE_KEY && (
+        <Script src={TURNSTILE_SRC} strategy="afterInteractive" onReady={() => setTurnstileReady(true)} />
+      )}
       <div className="wrap g12">
         <div className="res-l">
           <p className="eyebrow reveal">Reservations</p>
@@ -281,6 +350,8 @@ export default function Reservation() {
                   </div>
                 </div>
               </fieldset>
+
+              {TURNSTILE_SITE_KEY && <div ref={turnstileBox} className="turnstile" />}
 
               {status === "error" && (
                 <div className="alert" role="alert">

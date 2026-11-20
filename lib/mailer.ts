@@ -1,4 +1,5 @@
 import "server-only";
+import { after } from "next/server";
 import nodemailer, { type SendMailOptions, type Transporter } from "nodemailer";
 import { site } from "@/data/site";
 import { customerEmail, ownerEmail } from "./email-templates";
@@ -134,6 +135,46 @@ function isQuotaError(err: unknown): boolean {
 }
 
 /**
+ * Tells the owner when the primary account is failing and mail is going through the backup,
+ * so a broken Gmail App Password or an exhausted quota doesn't go unnoticed.
+ * At most once every 6 hours per server instance; sent after the response so the guest doesn't wait.
+ */
+const ALERT_EVERY_MS = 6 * 60 * 60 * 1000;
+let lastAlertAt = 0;
+
+function alertOwnerPrimaryFailing(cfg: MailConfig, reason: string): void {
+  if (!cfg.fallback || Date.now() - lastAlertAt < ALERT_EVERY_MS) return;
+  lastAlertAt = Date.now();
+  const fallback = cfg.fallback;
+  const text = [
+    `The ${site.name} website could not send email through its main account (${cfg.primary.user}),`,
+    `so reservation emails are being sent through the backup provider (${fallback.host}).`,
+    "",
+    `Reason: ${reason}`,
+    "",
+    "Bookings are still arriving. If this keeps happening, check the Gmail App Password",
+    "and the account's sending limit. You'll get at most one of these alerts every 6 hours.",
+  ].join("\n");
+  const send = async () => {
+    try {
+      await getTransporter(fallback).sendMail({
+        from: { name: `${site.name} website`, address: fallback.fromAddress },
+        to: cfg.owner,
+        subject: `[${site.name} website] Main email account is failing — using backup`,
+        text,
+      });
+    } catch (err) {
+      console.error("[mail] Could not send the owner alert:", (err as Error)?.message ?? err);
+    }
+  };
+  try {
+    after(send); // runs once the response has been sent
+  } catch {
+    void send(); // outside a request (e.g. scripts)
+  }
+}
+
+/**
  * Sends one message through the primary account, retrying through the backup if the
  * primary fails. Returns which account delivered it; throws if every option failed.
  */
@@ -144,13 +185,18 @@ async function deliver(cfg: MailConfig, message: Omit<SendMailOptions, "from">, 
   if (cfg.fallback) accounts.push(cfg.fallback);
 
   let lastError: unknown;
+  let primaryError: string | null = null;
   for (const account of accounts) {
     try {
       await getTransporter(account).sendMail({ ...message, from: { name: site.name, address: account.fromAddress } });
-      if (account.label === "fallback") console.warn(`[mail] ${what} sent via the backup provider.`);
+      if (account.label === "fallback") {
+        console.warn(`[mail] ${what} sent via the backup provider.`);
+        if (primaryError) alertOwnerPrimaryFailing(cfg, primaryError);
+      }
       return account.label;
     } catch (err) {
       lastError = err;
+      if (account.label === "primary") primaryError = String((err as Error)?.message ?? err).slice(0, 300);
       if (account.label === "primary" && isQuotaError(err)) {
         primaryPausedUntil = Date.now() + PRIMARY_PAUSE_MS;
         console.error(`[mail] Primary account hit a sending limit; using the backup for the next hour.`);

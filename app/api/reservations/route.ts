@@ -2,6 +2,8 @@ import { randomBytes } from "node:crypto";
 import { NextResponse } from "next/server";
 import { MailConfigError, assertMailConfigured, sendReservationEmails } from "@/lib/mailer";
 import { markSheetEmailFailed, saveReservationToSheet } from "@/lib/sheets";
+import { isRateLimited, type Limit } from "@/lib/rate-limit";
+import { verifyTurnstile } from "@/lib/turnstile";
 import { nowInCafeTimeZone, validateReservation } from "@/lib/validation";
 
 /** Short, readable reference such as "AUR-7KQ2XD", used in the sheet and both emails. */
@@ -19,25 +21,47 @@ export const dynamic = "force-dynamic";
 const MAX_BODY_BYTES = 10_000;
 
 /**
- * Best-effort rate limit: 5 requests per IP per 10 minutes.
- * In-memory, so it resets on restart and is per server instance — enough to blunt
- * accidental repeats and casual abuse, not a substitute for a shared store at scale.
+ * Rate limits. Shared across server instances when Upstash Redis is configured
+ * (see lib/rate-limit.ts), otherwise per instance.
+ * - per IP: blunts scripted floods from one connection
+ * - per email / phone: stops the form being used to spam one person's inbox from many IPs
  */
-const WINDOW_MS = 10 * 60 * 1000;
-const MAX_PER_WINDOW = 5;
-const hits = new Map<string, number[]>();
+const LIMITS = {
+  ip: { name: "ip", max: 5, windowSeconds: 10 * 60 },
+  email: { name: "email", max: 3, windowSeconds: 24 * 60 * 60 },
+  phone: { name: "phone", max: 3, windowSeconds: 24 * 60 * 60 },
+} satisfies Record<string, Limit>;
 
-function rateLimited(ip: string): boolean {
-  const now = Date.now();
-  const recent = (hits.get(ip) ?? []).filter((t) => now - t < WINDOW_MS);
-  if (recent.length >= MAX_PER_WINDOW) {
-    hits.set(ip, recent);
-    return true;
+const TOO_MANY = "Too many requests were sent. Please wait a while, or call us to book.";
+
+/** Client IP. On Vercel these headers are set by the platform and can't be spoofed by the visitor. */
+function clientIp(request: Request): string | null {
+  const h = request.headers;
+  return (
+    h.get("x-vercel-forwarded-for")?.split(",")[0]?.trim() ||
+    h.get("x-real-ip")?.trim() ||
+    h.get("x-forwarded-for")?.split(",")[0]?.trim() ||
+    null
+  );
+}
+
+/**
+ * Only accept requests from this site's own pages: blocks other websites from posting
+ * to the API from a visitor's browser (CSRF) and casual cross-site abuse.
+ */
+function sameOrigin(request: Request): boolean {
+  const h = request.headers;
+  if (h.get("sec-fetch-site") === "cross-site") return false;
+  const origin = h.get("origin");
+  if (!origin) return true; // non-browser clients; the other checks still apply
+  let originHost: string;
+  try {
+    originHost = new URL(origin).host;
+  } catch {
+    return false;
   }
-  recent.push(now);
-  hits.set(ip, recent);
-  if (hits.size > 5000) hits.clear(); // keep memory bounded
-  return false;
+  const host = h.get("x-forwarded-host")?.split(",")[0]?.trim() || h.get("host");
+  return originHost === host;
 }
 
 function json(body: unknown, status: number) {
@@ -45,6 +69,13 @@ function json(body: unknown, status: number) {
 }
 
 export async function POST(request: Request) {
+  if (!sameOrigin(request)) {
+    return json({ ok: false, error: "Invalid request." }, 403);
+  }
+  if (!request.headers.get("content-type")?.toLowerCase().startsWith("application/json")) {
+    return json({ ok: false, error: "Invalid request." }, 415);
+  }
+
   const raw = await request.text().catch(() => "");
   if (!raw || raw.length > MAX_BODY_BYTES) {
     return json({ ok: false, error: "Invalid request." }, 400);
@@ -64,14 +95,32 @@ export async function POST(request: Request) {
     return json({ ok: true }, 200);
   }
 
-  const ip = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || request.headers.get("x-real-ip") || "unknown";
-  if (rateLimited(ip)) {
-    return json({ ok: false, error: "Too many requests were sent from your connection. Please wait a few minutes." }, 429);
+  const ip = clientIp(request);
+  if (await isRateLimited(LIMITS.ip, ip ?? "unknown")) {
+    return json({ ok: false, error: TOO_MANY }, 429);
   }
 
   const result = validateReservation(body);
   if (!result.ok) {
     return json({ ok: false, errors: result.errors }, 422);
+  }
+
+  // Bot check (Cloudflare Turnstile), when configured. If Cloudflare itself is unreachable we
+  // let the request through rather than lose a booking — the rate limits still apply.
+  const human = await verifyTurnstile(body.turnstileToken, ip);
+  if (human === "missing" || human === "invalid") {
+    return json({ ok: false, error: "The security check didn’t complete.", turnstile: true }, 400);
+  }
+
+  // Per-recipient limits: checked after validation so they count only real-looking requests.
+  const emailKey = result.data.email.toLowerCase();
+  const phoneKey = result.data.phone.replace(/\D/g, "").slice(-10);
+  const [emailLimited, phoneLimited] = await Promise.all([
+    isRateLimited(LIMITS.email, emailKey),
+    isRateLimited(LIMITS.phone, phoneKey),
+  ]);
+  if (emailLimited || phoneLimited) {
+    return json({ ok: false, error: TOO_MANY }, 429);
   }
 
   try {
