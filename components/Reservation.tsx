@@ -55,6 +55,8 @@ export default function Reservation() {
   const turnstileBox = useRef<HTMLDivElement>(null);
   const turnstileId = useRef<string | null>(null);
   const turnstileToken = useRef("");
+  /** True when Turnstile reported an error (e.g. domain not allowed, script blocked) — waiting won't help. */
+  const turnstileFailed = useRef(false);
   const [turnstileReady, setTurnstileReady] = useState(false);
 
   // Computed on the client to avoid a server/client date mismatch during hydration.
@@ -76,12 +78,15 @@ export default function Reservation() {
       size: "flexible",
       callback: (token: string) => {
         turnstileToken.current = token;
+        turnstileFailed.current = false;
       },
       "expired-callback": () => {
         turnstileToken.current = "";
       },
-      "error-callback": () => {
+      "error-callback": (code: string) => {
         turnstileToken.current = "";
+        turnstileFailed.current = true;
+        console.warn(`[reservation] Security check failed (Cloudflare Turnstile error ${code}).`);
       },
     });
     turnstileId.current = id;
@@ -122,7 +127,11 @@ export default function Reservation() {
     }
 
     if (TURNSTILE_SITE_KEY && !turnstileToken.current) {
-      setServerMessage("Our security check hasn’t finished yet. Please wait a few seconds and press the button again.");
+      setServerMessage(
+        turnstileFailed.current || !window.turnstile
+          ? "Our security check couldn’t run in your browser, so we can’t send your request online. Refreshing the page (or turning off an ad blocker) may help."
+          : "Our security check hasn’t finished yet. Please wait a few seconds and press the button again.",
+      );
       setStatus("error");
       return;
     }
@@ -194,7 +203,14 @@ export default function Reservation() {
   return (
     <section className="sec res" id="reservation" aria-labelledby="res-title">
       {TURNSTILE_SITE_KEY && (
-        <Script src={TURNSTILE_SRC} strategy="afterInteractive" onReady={() => setTurnstileReady(true)} />
+        <Script
+          src={TURNSTILE_SRC}
+          strategy="afterInteractive"
+          onReady={() => setTurnstileReady(true)}
+          onError={() => {
+            turnstileFailed.current = true;
+          }}
+        />
       )}
       <div className="wrap g12">
         <div className="res-l">
