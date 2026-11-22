@@ -25,7 +25,7 @@
 
 // Must exactly match GOOGLE_SHEETS_SECRET in the website's environment variables.
 // Paste it here in the Apps Script editor only — never commit the real value to git.
-const SECRET = "ZZ3BRM2Gt5gt4Wg6prTeV-XmnD7YrlY_";
+const SECRET = "PASTE_YOUR_SECRET_HERE";
 const PLACEHOLDER_SECRET = "PASTE_YOUR_SECRET_HERE";
 
 // The live website address, without a trailing slash — e.g. "https://aurelia-cafe.vercel.app".
