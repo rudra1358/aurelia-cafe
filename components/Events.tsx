@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { ArrowRight, CalendarDays } from "lucide-react";
-import { upcomingEvents } from "@/data/events";
+import { upcomingEvents, type CafeEvent } from "@/data/events";
 import { formatDate, formatTime } from "@/lib/format";
 import { nowInCafeTimeZone } from "@/lib/validation";
 import { T } from "./Language";
@@ -10,8 +10,8 @@ import { T } from "./Language";
  * there are none; on /events it lists all of them. "Book a seat" opens the reservation form
  * with the event selected.
  */
-export default function Events({ limit, headingLevel = 2 }: { limit?: number; headingLevel?: 1 | 2 }) {
-  const all = upcomingEvents(nowInCafeTimeZone().date);
+export default function Events({ events, limit, headingLevel = 2 }: { events: CafeEvent[]; limit?: number; headingLevel?: 1 | 2 }) {
+  const all = upcomingEvents(nowInCafeTimeZone().date, events);
   const list = limit ? all.slice(0, limit) : all;
   if (limit && list.length === 0) return null;
   const Heading = headingLevel === 1 ? "h1" : "h2";

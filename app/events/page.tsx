@@ -3,6 +3,7 @@ import Navbar from "@/components/Navbar";
 import Events from "@/components/Events";
 import Footer from "@/components/Footer";
 import { ogImages } from "@/lib/og-image";
+import { getSiteContent } from "@/lib/content-store";
 
 export const metadata: Metadata = {
   title: "Events",
@@ -14,12 +15,13 @@ export const metadata: Metadata = {
 // Past events drop off on their own: re-render at most every hour.
 export const revalidate = 3600;
 
-export default function EventsPage() {
+export default async function EventsPage() {
+  const { events } = await getSiteContent();
   return (
     <div id="top">
       <Navbar variant="solid" />
       <main id="main">
-        <Events headingLevel={1} />
+        <Events events={events} headingLevel={1} />
       </main>
       <Footer />
     </div>

@@ -21,6 +21,8 @@
  *    website, so emails, calendar invites and WhatsApp all come from one place.
  *    Run installTriggers() ONCE from the editor to switch these on.
  *  - archiveOldReservations(): moves past years' rows into "Archive <year>" tabs.
+ *  - Stores the menu and events the owner edits at <website>/admin, in a hidden
+ *    "Website content" tab (getContent / saveContent). Don't edit that tab by hand.
  */
 
 // Must exactly match GOOGLE_SHEETS_SECRET in the website's environment variables.
@@ -69,6 +71,12 @@ const CLOSED = ["Declined", "Cancelled", "Completed", "No-show", "Email failed"]
 /** How many recent rows to check for duplicates and capacity (keeps it fast; use the yearly archive). */
 const SCAN_ROWS = 5000;
 
+/** Hidden tab holding the menu + events JSON from the website's /admin page. */
+const CONTENT_SHEET = "Website content";
+/** A cell holds at most 50,000 characters, so the JSON is split over rows of column A. */
+const CONTENT_CHUNK = 45000;
+const CONTENT_MAX = 2000000;
+
 // ───────────────────────── Web app entry points ─────────────────────────
 
 function doPost(e) {
@@ -93,6 +101,8 @@ function doPost(e) {
     if (body.action === "markGuestNotEmailed" || body.action === "markEmailFailed") {
       return respond(markGuestNotEmailed(String(body.reference || "")));
     }
+    if (body.action === "getContent") return respond(getContent());
+    if (body.action === "saveContent") return respond(saveContent(body.content));
     if (body.action === "get") return respond(getBooking(String(body.reference || "")));
     if (body.action === "cancel") return respond(guestCancel(String(body.reference || ""), body.closedStatuses));
     if (body.action === "change") return respond(guestChange(body, body.rules || {}));
@@ -111,6 +121,38 @@ function doGet() {
 }
 
 // ───────────────────────── Actions ─────────────────────────
+
+/** Menu + events saved from the website's /admin page (null until the first save). */
+function getContent() {
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(CONTENT_SHEET);
+  if (!sheet || sheet.getLastRow() === 0) return { ok: true, content: null };
+  const json = sheet.getRange(1, 1, sheet.getLastRow(), 1).getValues()
+    .map(function (r) { return String(r[0]).replace(/^~/, ""); })
+    .join("");
+  return { ok: true, content: json || null };
+}
+
+function saveContent(content) {
+  if (typeof content !== "string" || !content || content.length > CONTENT_MAX) return { ok: false, error: "invalid content" };
+  try {
+    JSON.parse(content);
+  } catch (err) {
+    return { ok: false, error: "invalid content" };
+  }
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let sheet = ss.getSheetByName(CONTENT_SHEET);
+  if (!sheet) {
+    sheet = ss.insertSheet(CONTENT_SHEET);
+    sheet.hideSheet();
+  }
+  const rows = [];
+  // Each chunk starts with "~" so a chunk beginning with "=" or "+" is never read as a formula.
+  for (let i = 0; i < content.length; i += CONTENT_CHUNK) rows.push(["~" + content.slice(i, i + CONTENT_CHUNK)]);
+  sheet.clearContents();
+  // Plain text, so Sheets never turns the JSON into a number or a date.
+  sheet.getRange(1, 1, rows.length, 1).setNumberFormat("@").setValues(rows);
+  return { ok: true };
+}
 
 /**
  * rules (sent by the website):

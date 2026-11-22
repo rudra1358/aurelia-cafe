@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { Search, X } from "lucide-react";
-import { formatPrice, menu, type Diet, type DietTag, type MenuItem } from "@/data/menu";
+import { formatPrice, type Diet, type DietTag, type MenuItem, type MenuSection } from "@/data/menu";
 import { site } from "@/data/site";
 import type { TranslationKey } from "@/data/translations";
 import { useT } from "./Language";
@@ -40,12 +40,13 @@ function DietMark({ diet, label }: { diet: Diet; label: string }) {
   );
 }
 
-export default function Menu() {
+/** `menu` comes from the owner's saved menu (/admin), see lib/content-store.ts. */
+export default function Menu({ menu }: { menu: MenuSection[] }) {
   const t = useT();
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<Filter | null>(null);
 
-  const allItems = useMemo(() => menu.flatMap((s) => s.categories.flatMap((c) => c.items)), []);
+  const allItems = useMemo(() => menu.flatMap((s) => s.categories.flatMap((c) => c.items)), [menu]);
   // Only offer filters for labels the owner has actually entered.
   const filters = FILTER_ORDER.filter((f) => allItems.some((i) => matchesFilter(i, f)));
 

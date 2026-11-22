@@ -3,7 +3,7 @@
  * The server always re-validates — client checks are only for convenience.
  */
 import { site } from "@/data/site";
-import { findUpcomingEvent } from "@/data/events";
+import { events as defaultEvents, findUpcomingEvent, type CafeEvent } from "@/data/events";
 import { formatTime } from "./format";
 
 export const reservationFields = ["event", "name", "email", "phone", "date", "time", "guests", "notes", "whatsapp"] as const;
@@ -102,6 +102,8 @@ function str(v: unknown): string {
 export function validateReservation(
   raw: unknown,
   now: { date: string; time: string } = nowInCafeTimeZone(),
+  /** The café's current events (from the admin page); bookings can only be for one of these. */
+  eventList: CafeEvent[] = defaultEvents,
 ): ValidationResult {
   const src = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
   const { maxGuests, maxNotesLength, maxDaysAhead, slotMinutes } = site.reservations;
@@ -125,7 +127,7 @@ export function validateReservation(
 
   // Booking a seat at an event: the event sets the date and time.
   const eventId = str(src.event).trim();
-  const event = eventId ? findUpcomingEvent(eventId, now.date) : null;
+  const event = eventId ? findUpcomingEvent(eventId, now.date, eventList) : null;
   if (eventId && !event) errors.event = "This event is no longer available. Please choose another, or book a normal table.";
 
   const date = event ? event.date : str(src.date).trim();

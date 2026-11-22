@@ -2,7 +2,9 @@
  * Events at Aurelia — live music, workshops, tastings. Guests book a seat through the
  * normal reservation form (the event is pre-selected, with its date and time).
  *
- * Add real events to `events` below. Past events are hidden automatically.
+ * The owner adds and removes events at /admin (see lib/content-store.ts). The list below is
+ * only the starting point used until the owner first saves from the admin page.
+ * Past events are hidden automatically.
  * While the site is in demo mode (data/site.ts → demo.enabled) and there are no real
  * events, two clearly labelled SAMPLE events are shown so the feature can be seen working.
  */
@@ -78,12 +80,12 @@ function sampleEvents(today: string): CafeEvent[] {
 }
 
 /** Events from `today` (YYYY-MM-DD, café time) onwards, soonest first. */
-export function upcomingEvents(today: string): CafeEvent[] {
-  const real = events.filter((e) => e.date >= today);
-  const list = real.length === 0 && site.demo.enabled ? sampleEvents(today) : real;
-  return [...list].sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time));
+export function upcomingEvents(today: string, list: CafeEvent[] = events): CafeEvent[] {
+  const real = list.filter((e) => !e.sample && e.date >= today);
+  const shown = real.length === 0 && site.demo.enabled ? sampleEvents(today) : real;
+  return [...shown].sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time));
 }
 
-export function findUpcomingEvent(id: string, today: string): CafeEvent | null {
-  return upcomingEvents(today).find((e) => e.id === id) ?? null;
+export function findUpcomingEvent(id: string, today: string, list: CafeEvent[] = events): CafeEvent | null {
+  return upcomingEvents(today, list).find((e) => e.id === id) ?? null;
 }

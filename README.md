@@ -61,8 +61,8 @@ Every request becomes a row with a reference number and a **Status** dropdown (P
 </td>
 <td valign="top">
 
-### ☕ Data-driven menu
-All 16 drinks with ₹ prices and bestseller labels come from one file. Add a food section and it appears automatically.
+### ☕ Owner-editable menu
+The owner signs in at `/admin` to add, change or remove items, prices and whole sections (e.g. Desserts). Guests never see the editor.
 
 </td>
 <td valign="top">
@@ -122,7 +122,7 @@ Veg / non-veg marks, Jain and vegan labels, allergens, filter buttons and a sear
 <td valign="top">
 
 ### 🎶 Events
-An `/events` page and home-page section. "Book a seat" opens the normal form with the event's date and time filled in.
+An `/events` page and home-page section, managed by the owner at `/admin`. "Book a seat" opens the normal form with the event's date and time filled in.
 
 </td>
 <td valign="top">
@@ -380,6 +380,8 @@ Every push and pull request runs typecheck, lint, tests and a production build o
 | `WHATSAPP_OWNER_NUMBER` | — | Owner's WhatsApp number for new-booking alerts |
 | `WHATSAPP_TEMPLATE_LANG` | — | Language the templates were approved in (default `en`) |
 | `NEXT_PUBLIC_WHATSAPP_OPT_IN` | — | `true` shows the "updates on WhatsApp" checkbox on the form |
+| `ADMIN_PASSWORD` | — | Owner password for `/admin` (menu and events). At least 10 characters. Empty = admin off. See [Owner admin](#-owner-admin) |
+| `SITE_CONTENT_STORE` | — | Optional: force where admin changes are saved (`sheets`, `redis` or `file`). Normally picked automatically |
 
 > [!IMPORTANT]
 > `.env.local` is git-ignored. Never commit real credentials.
@@ -545,15 +547,44 @@ Both of these are free and optional, but recommended before going live:
 
 <br>
 
+## ✦ Owner admin
+
+The owner manages the **menu** and **events** from a private page, `/admin`. It is not linked anywhere on the site, search engines are told not to index it, and every change needs the owner password. Guests only ever see the result.
+
+**What the owner can do**
+
+- Add a whole new menu section (e.g. *Desserts*), rename it, reorder it or delete it
+- Add categories inside a section (e.g. *Cakes*, *Ice cream*)
+- Add, edit, reorder and remove items: name, price (one price, sizes like Regular / Large, or market price), veg / egg / non-veg, bestseller, Jain / vegan labels, allergens and a description
+- Add, edit and remove events (title, date, start and end time, price, description) and clear out past ones in one click
+
+Changes go live as soon as **Save changes** is pressed. If two people edit at once, the second save is refused instead of overwriting the first.
+
+**Setup**
+
+1. Set `ADMIN_PASSWORD` (at least 10 characters) in `.env.local` locally, and in Vercel → Project → Settings → Environment Variables. Redeploy.
+2. Choose where changes are stored. The first one available is used:
+   - **Google Sheet** (recommended, already part of the setup): paste the updated [`scripts/google-apps-script.gs`](scripts/google-apps-script.gs) into the Apps Script editor (keep your `SECRET` and `SITE_URL`), then **Deploy → Manage deployments → ✏️ → New version**. The menu is kept in a hidden *Website content* tab. Don't edit that tab by hand.
+   - **Upstash Redis**, if `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` are set.
+   - **A local file** (`.data/site-content.json`) when running on your own computer or server. This doesn't work on Vercel, whose disk is read-only.
+3. Open `https://<your-site>/admin`, sign in, edit and save.
+
+Until the first save, the site shows the starting menu and events from [`data/menu.ts`](data/menu.ts) and [`data/events.ts`](data/events.ts). After that, `/admin` is the source of truth and those files are only the fallback.
+
+> [!TIP]
+> To try the admin locally without touching the live sheet, add `SITE_CONTENT_STORE=file` to `.env.local`.
+
+<br>
+
 ## ✦ Customizing the content
 
 Everything business-specific lives in a few files in [`data/`](data), so the site can be rebranded quickly.
 
 | What | Where |
 |:--|:--|
-| Menu items, prices, bestsellers, new sections (e.g. food) | [`data/menu.ts`](data/menu.ts) |
-| Veg / non-veg / egg mark, Jain and vegan labels, allergens | [`data/menu.ts`](data/menu.ts) → `diet`, `tags`, `allergens` on each item (filter buttons appear for labels that are used) |
-| Events (live music, workshops) | [`data/events.ts`](data/events.ts). Past events hide themselves. In demo mode, two clearly marked sample events are shown until you add real ones |
+| Menu items, prices, bestsellers, new sections (e.g. Desserts) | **`/admin`** ([Owner admin](#-owner-admin)). [`data/menu.ts`](data/menu.ts) is the starting menu until the first save |
+| Veg / non-veg / egg mark, Jain and vegan labels, allergens | **`/admin`** → "More" on each item (filter buttons appear for labels that are used) |
+| Events (live music, workshops) | **`/admin`** → Events. Past events hide themselves. In demo mode, two clearly marked sample events are shown until you add real ones |
 | Instagram, Google reviews, Swiggy and Zomato links, Google rating | [`data/site.ts`](data/site.ts) → `online`. Each appears only once it's set |
 | Guest reviews on the home page | [`data/site.ts`](data/site.ts) → `testimonials` (real reviews only, quoted word for word) |
 | Gujarati and Hindi wording | [`data/translations.ts`](data/translations.ts). Menu item names, legal pages, emails and form error messages stay in English |

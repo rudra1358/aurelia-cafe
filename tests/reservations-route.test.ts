@@ -9,6 +9,11 @@ vi.mock("next/server", async (importOriginal) => ({
   after: vi.fn(),
 }));
 
+vi.mock("@/lib/content-store", async () => {
+  const { events } = await import("@/data/events");
+  const { menu } = await import("@/data/menu");
+  return { getSiteContent: vi.fn(async () => ({ menu, events, updatedAt: null })) };
+});
 vi.mock("@/lib/rate-limit", () => ({ isRateLimited: vi.fn() }));
 vi.mock("@/lib/turnstile", () => ({ verifyTurnstile: vi.fn() }));
 vi.mock("@/lib/whatsapp", () => ({ WHATSAPP_TEMPLATES: { ownerNewBooking: "owner_new_booking" }, whatsappOwner: vi.fn() }));

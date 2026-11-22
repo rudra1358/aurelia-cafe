@@ -9,11 +9,15 @@ import Footer from "@/components/Footer";
 import Events from "@/components/Events";
 import Social from "@/components/Social";
 import { site } from "@/data/site";
+import { getSiteContent } from "@/lib/content-store";
 
 // The events list depends on today's date: re-render at most every hour.
 export const revalidate = 3600;
 
-export default function HomePage() {
+export default async function HomePage() {
+  // Menu and events as the owner last saved them at /admin.
+  const content = await getSiteContent();
+
   // Structured data for search engines. Only facts that have been provided are included.
   const jsonLd = {
     "@context": "https://schema.org",
@@ -45,9 +49,9 @@ export default function HomePage() {
       <main id="main">
         <About />
         <FeaturedItems />
-        <Menu />
-        <Events limit={3} />
-        <Reservation />
+        <Menu menu={content.menu} />
+        <Events events={content.events} limit={3} />
+        <Reservation eventList={content.events} />
         <Social />
         <Contact />
       </main>

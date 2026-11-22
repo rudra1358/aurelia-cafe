@@ -9,6 +9,7 @@ import { formatDate, formatGuests, formatTime } from "@/lib/format";
 import { WHATSAPP_TEMPLATES, whatsappOwner } from "@/lib/whatsapp";
 import { after } from "next/server";
 import { nowInCafeTimeZone, validateReservation } from "@/lib/validation";
+import { getSiteContent } from "@/lib/content-store";
 
 /** Short, readable reference such as "AUR-7KQ2XD", used in the sheet and both emails. */
 function makeReference(): string {
@@ -70,7 +71,8 @@ export async function POST(request: Request) {
     return json({ ok: false, error: TOO_MANY }, 429);
   }
 
-  const result = validateReservation(body);
+  // Event bookings are checked against the owner's current events (/admin).
+  const result = validateReservation(body, nowInCafeTimeZone(), (await getSiteContent()).events);
   if (!result.ok) {
     return json({ ok: false, errors: result.errors }, 422);
   }

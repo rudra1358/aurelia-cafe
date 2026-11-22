@@ -6,7 +6,7 @@ import Script from "next/script";
 import { Check, ChevronDown, CircleAlert, Clock, Info, LoaderCircle } from "lucide-react";
 import cheers from "@/public/images/cheers.jpg";
 import { site, telHref } from "@/data/site";
-import { upcomingEvents } from "@/data/events";
+import { upcomingEvents, type CafeEvent } from "@/data/events";
 import { formatDate, formatTime } from "@/lib/format";
 import { trackBookingRequested, trackBookingStarted } from "@/lib/analytics";
 import { useT } from "./Language";
@@ -54,7 +54,8 @@ const empty: ReservationInput = {
   whatsapp: "",
 };
 
-export default function Reservation() {
+/** `eventList` is the owner's saved events (/admin); past ones are filtered out here. */
+export default function Reservation({ eventList }: { eventList: CafeEvent[] }) {
   const t = useT();
   const [values, setValues] = useState<ReservationInput>(empty);
   const [errors, setErrors] = useState<ReservationErrors>({});
@@ -99,18 +100,18 @@ export default function Reservation() {
   }, []);
 
   // Events open for booking (computed on the client, like minDate).
-  const events = minDate ? upcomingEvents(minDate) : [];
+  const events = minDate ? upcomingEvents(minDate, eventList) : [];
   const selectedEvent = events.find((e) => e.id === values.event) ?? null;
 
   // "Book a seat" links arrive as /?event=<id>#reservation: pre-select that event.
   useEffect(() => {
     const id = new URLSearchParams(window.location.search).get("event");
     if (!id) return;
-    const ev = upcomingEvents(nowInCafeTimeZone().date).find((e) => e.id === id);
+    const ev = upcomingEvents(nowInCafeTimeZone().date, eventList).find((e) => e.id === id);
     // The URL is only known in the browser, so this runs after hydration.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     if (ev) setValues((v) => ({ ...v, event: ev.id, date: ev.date, time: ev.time }));
-  }, []);
+  }, [eventList]);
 
   const chooseEvent = (id: string) => {
     const ev = events.find((e) => e.id === id);
@@ -182,7 +183,7 @@ export default function Reservation() {
     e.preventDefault();
     if (inFlight.current) return; // duplicate-submission guard
 
-    const check = validateReservation(values);
+    const check = validateReservation(values, nowInCafeTimeZone(), eventList);
     if (!check.ok) {
       setErrors(check.errors);
       focusFirstError(check.errors);
