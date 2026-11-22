@@ -515,6 +515,7 @@
   .adm-small-btn.btn-line { justify-self: start; }
   .adm-new-section { display: flex; align-items: flex-end; gap: 16px; border-style: dashed; }
 
+  .adm-restore { display: grid; gap: 14px; border-color: var(--color-accent); }
   .adm-event.adm-past { opacity: .72; }
   .adm-when { margin: 8px 0 0; }
 

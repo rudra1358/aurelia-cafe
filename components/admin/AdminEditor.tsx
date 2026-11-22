@@ -20,6 +20,7 @@ import type { Diet, DietTag, MenuItem, MenuSection, Price } from "@/data/menu";
 import { formatDate } from "@/lib/format";
 import { LIMITS, sanitizeContent, type EditableContent, type SiteContent } from "@/lib/site-content";
 import type { ContentBackend } from "@/lib/content-store";
+import { applyRestore, restoreLabel, restoreOptions, type RestoreOption } from "@/lib/menu-restore";
 
 // ───────────── Draft types: the saved shapes plus a stable React key ─────────────
 
@@ -57,6 +58,16 @@ function toDraft(c: EditableContent): { menu: DSection[]; events: DEvent[] } {
       .sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time))
       .map((e) => ({ ...e, _k: newKey() })),
   };
+}
+
+/** Adds a React key to every section, category and item in a copy of starting-menu data. */
+function withKeys<T>(value: T): T {
+  if (Array.isArray(value)) return value.map(withKeys) as T;
+  if (!value || typeof value !== "object") return value;
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(value)) out[k] = withKeys(v);
+  if ("name" in out || "title" in out) out._k = newKey();
+  return out as T;
 }
 
 /** JSON without the React keys — used to tell whether anything changed. */
@@ -300,14 +311,9 @@ function ItemEditor({
 function MenuEditor({ menu, edit, starting }: { menu: DSection[]; edit: (fn: (m: DSection[]) => void) => void; starting: MenuSection[] }) {
   const [newSection, setNewSection] = useState("");
 
-  // Sections of the starting menu (data/menu.ts) that are no longer on the menu — e.g. deleted by mistake.
-  const removed = starting.filter((d) => !menu.some((s) => s.id === d.id || s.title.trim().toLowerCase() === d.title.toLowerCase()));
-  const restore = (section: MenuSection) => {
-    const [copy] = toDraft({ menu: [section], events: [] }).menu;
-    // Put it back where it was in the starting menu (the first section is the menu's main heading).
-    const at = Math.min(starting.indexOf(section), menu.length);
-    edit((m) => void m.splice(at, 0, copy));
-  };
+  // Parts of the starting menu (data/menu.ts) no longer on the menu — e.g. deleted by mistake.
+  const removed = restoreOptions(menu, starting);
+  const restore = (options: RestoreOption[]) => edit((m) => options.forEach((opt) => applyRestore(m, opt, withKeys)));
 
   const addSection = () => {
     const title = newSection.trim();
@@ -319,6 +325,27 @@ function MenuEditor({ menu, edit, starting }: { menu: DSection[]; edit: (fn: (m:
 
   return (
     <div className="adm-stack">
+      {removed.length > 0 && (
+        <div className="adm-card adm-restore">
+          <p className="adm-muted" style={{ margin: 0 }}>
+            <strong>Deleted something by mistake?</strong> These parts of the original menu are missing. Restore puts them back with their
+            original prices — then press Save changes.
+          </p>
+          <div className="adm-head-btns">
+            {removed.map((opt) => (
+              <button key={opt.key} type="button" className="btn btn-line adm-small-btn" onClick={() => restore([opt])}>
+                <RotateCcw size={14} /> Restore {restoreLabel(opt)}
+              </button>
+            ))}
+            {removed.length > 1 && (
+              <button type="button" className="btn btn-dark adm-small-btn" onClick={() => restore(removed)}>
+                <RotateCcw size={14} /> Restore all
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
       {menu.map((section, si) => (
         <section key={section._k} className="adm-card adm-section" aria-label={`Menu section ${section.title}`}>
           <div className="adm-row">
@@ -431,22 +458,6 @@ function MenuEditor({ menu, edit, starting }: { menu: DSection[]; edit: (fn: (m:
             <Plus size={14} /> Add section
           </button>
         </form>
-      )}
-
-      {removed.length > 0 && menu.length < LIMITS.sections && (
-        <div className="adm-card adm-row adm-wrap-row">
-          <p className="adm-muted" style={{ margin: 0, flex: "1 1 260px" }}>
-            Removed a section by mistake? Put it back with its original items and prices, then press Save changes.
-          </p>
-          {removed.map((section) => {
-            const n = section.categories.reduce((sum, c) => sum + c.items.length, 0);
-            return (
-              <button key={section.id} type="button" className="btn btn-line adm-small-btn" onClick={() => restore(section)}>
-                <RotateCcw size={14} /> Restore “{section.title}” ({n} items)
-              </button>
-            );
-          })}
-        </div>
       )}
     </div>
   );
