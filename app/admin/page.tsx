@@ -5,6 +5,7 @@ import { nowInCafeTimeZone } from "@/lib/validation";
 import AdminEditor from "@/components/admin/AdminEditor";
 import AdminLogin from "@/components/admin/AdminLogin";
 import { site } from "@/data/site";
+import { menu as defaultMenu } from "@/data/menu";
 
 /**
  * Owner admin: edit the menu and events. Not linked from anywhere on the site, hidden from
@@ -65,7 +66,7 @@ export default async function AdminPage() {
   return (
     <Shell>
       {content ? (
-        <AdminEditor initial={content} backend={backend} today={nowInCafeTimeZone().date} demo={site.demo.enabled} />
+        <AdminEditor initial={content} starting={defaultMenu} backend={backend} today={nowInCafeTimeZone().date} demo={site.demo.enabled} />
       ) : (
         <div className="adm-card adm-narrow">
           <h1 className="adm-h1">Couldn’t load the menu</h1>

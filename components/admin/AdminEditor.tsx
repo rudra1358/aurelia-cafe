@@ -11,11 +11,12 @@ import {
   LoaderCircle,
   LogOut,
   Plus,
+  RotateCcw,
   Trash2,
 } from "lucide-react";
 import { logout, saveContent } from "@/app/admin/actions";
 import type { CafeEvent } from "@/data/events";
-import type { Diet, DietTag, MenuItem, Price } from "@/data/menu";
+import type { Diet, DietTag, MenuItem, MenuSection, Price } from "@/data/menu";
 import { formatDate } from "@/lib/format";
 import { LIMITS, sanitizeContent, type EditableContent, type SiteContent } from "@/lib/site-content";
 import type { ContentBackend } from "@/lib/content-store";
@@ -296,8 +297,17 @@ function ItemEditor({
   );
 }
 
-function MenuEditor({ menu, edit }: { menu: DSection[]; edit: (fn: (m: DSection[]) => void) => void }) {
+function MenuEditor({ menu, edit, starting }: { menu: DSection[]; edit: (fn: (m: DSection[]) => void) => void; starting: MenuSection[] }) {
   const [newSection, setNewSection] = useState("");
+
+  // Sections of the starting menu (data/menu.ts) that are no longer on the menu — e.g. deleted by mistake.
+  const removed = starting.filter((d) => !menu.some((s) => s.id === d.id || s.title.trim().toLowerCase() === d.title.toLowerCase()));
+  const restore = (section: MenuSection) => {
+    const [copy] = toDraft({ menu: [section], events: [] }).menu;
+    // Put it back where it was in the starting menu (the first section is the menu's main heading).
+    const at = Math.min(starting.indexOf(section), menu.length);
+    edit((m) => void m.splice(at, 0, copy));
+  };
 
   const addSection = () => {
     const title = newSection.trim();
@@ -422,6 +432,22 @@ function MenuEditor({ menu, edit }: { menu: DSection[]; edit: (fn: (m: DSection[
           </button>
         </form>
       )}
+
+      {removed.length > 0 && menu.length < LIMITS.sections && (
+        <div className="adm-card adm-row adm-wrap-row">
+          <p className="adm-muted" style={{ margin: 0, flex: "1 1 260px" }}>
+            Removed a section by mistake? Put it back with its original items and prices, then press Save changes.
+          </p>
+          {removed.map((section) => {
+            const n = section.categories.reduce((sum, c) => sum + c.items.length, 0);
+            return (
+              <button key={section.id} type="button" className="btn btn-line adm-small-btn" onClick={() => restore(section)}>
+                <RotateCcw size={14} /> Restore “{section.title}” ({n} items)
+              </button>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
@@ -519,7 +545,20 @@ function EventsEditor({ events, edit, today, demo }: { events: DEvent[]; edit: (
 
 // ───────────── Page ─────────────
 
-export default function AdminEditor({ initial, backend, today, demo }: { initial: SiteContent; backend: ContentBackend; today: string; demo: boolean }) {
+export default function AdminEditor({
+  initial,
+  starting,
+  backend,
+  today,
+  demo,
+}: {
+  initial: SiteContent;
+  /** The starting menu from data/menu.ts, so deleted sections can be restored. */
+  starting: MenuSection[];
+  backend: ContentBackend;
+  today: string;
+  demo: boolean;
+}) {
   const [tab, setTab] = useState<"menu" | "events">("menu");
   const [draft, setDraft] = useState(() => toDraft(initial));
   const [saved, setSaved] = useState(() => snapshot(draft.menu, draft.events));
@@ -619,7 +658,7 @@ export default function AdminEditor({ initial, backend, today, demo }: { initial
       </div>
 
       <div role="tabpanel">
-        {tab === "menu" ? <MenuEditor menu={draft.menu} edit={editMenu} /> : <EventsEditor events={draft.events} edit={editEvents} today={today} demo={demo} />}
+        {tab === "menu" ? <MenuEditor menu={draft.menu} edit={editMenu} starting={starting} /> : <EventsEditor events={draft.events} edit={editEvents} today={today} demo={demo} />}
       </div>
 
       <div className={`adm-bar${dirty || status.kind !== "idle" ? " show" : ""}`} role="region" aria-label="Save changes">
