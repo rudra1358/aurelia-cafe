@@ -21,7 +21,7 @@ A premium, fully responsive website for a café in **Sindhu Bhavan, Ahmedabad**,
 
 <br>
 
-[**Features**](#-features) · [**Screenshots**](#-screenshots) · [**How it works**](#-how-a-reservation-works) · [**Quick start**](#-quick-start) · [**Email setup**](#-gmail-setup) · [**Sheets setup**](#-google-sheets-setup) · [**Customize**](#-customizing-the-content)
+[**Features**](#-features) · [**Screenshots**](#-screenshots) · [**System map**](#-the-whole-system) · [**How it works**](#-how-a-reservation-works) · [**Quick start**](#-quick-start) · [**Email setup**](#-gmail-setup) · [**Sheets setup**](#-google-sheets-setup) · [**Customize**](#-customizing-the-content)
 
 </div>
 
@@ -42,7 +42,7 @@ Modern minimalist luxury: Cormorant Garamond with DM Sans, a warm cream-and-espr
 <td width="33%" valign="top">
 
 ### 📅 Real reservations
-A validated form with loading, success and error states and protection against double submits. Success is shown **only** after the emails are actually sent.
+A validated form with loading, success and error states and protection against double submits. Success is shown **only** once the booking has actually reached the owner (saved in the sheet or emailed).
 
 </td>
 <td width="33%" valign="top">
@@ -174,6 +174,124 @@ A language switch in the navigation translates the site's interface and remember
 <br>
 <img src="docs/screenshots/experiences.jpg" alt="Signature experiences: six numbered photos of croissants, cappuccino, pancakes, desserts, sandwiches and iced coffee in a staggered layout" width="100%">
 </details>
+
+<br>
+
+## ✦ The whole system
+
+Every part of the project and how they talk to each other. Solid arrows are the normal path; dotted arrows are the optional or backup paths (Brevo when Gmail fails, WhatsApp when it's set up).
+
+```mermaid
+flowchart TB
+    Guest(["Guest<br/>phone or laptop"])
+    Owner(["Café owner"])
+
+    subgraph Vercel["Vercel · Next.js site"]
+        Pages["Pages<br/>home · menu · events · form · /booking/[ref]"]
+        Res["/api/reservations<br/>10 checks → save → email"]
+        Book["/api/booking<br/>signed change or cancel"]
+        Notify["/api/notify<br/>status → email, WhatsApp"]
+        Mailer["lib/mailer<br/>Gmail first, Brevo backup"]
+    end
+
+    subgraph Checks["Spam checks"]
+        Turnstile["Cloudflare Turnstile<br/>bot check"]
+        Redis["Upstash Redis<br/>rate-limit counters"]
+    end
+
+    Sheet[("Google Sheet + Apps Script<br/>one row per booking · Status · triggers")]
+
+    subgraph Delivery["Delivery"]
+        Gmail["Gmail SMTP<br/>main sender"]
+        Brevo["Brevo SMTP<br/>backup sender"]
+        WA["WhatsApp Cloud API<br/>optional"]
+    end
+
+    Inbox(["Guest and owner inboxes"])
+
+    Guest -->|opens| Pages
+    Pages -->|POST booking| Res
+    Pages -->|Change or cancel link| Book
+    Res -->|verify token| Turnstile
+    Res -->|count tries| Redis
+    Res -->|save row, skip duplicates, check capacity| Sheet
+    Book <-->|read · change · cancel| Sheet
+    Owner -->|changes Status| Sheet
+    Sheet -->|on edit · hourly reminder| Notify
+    Res -->|send| Mailer
+    Book -->|send| Mailer
+    Notify -->|send| Mailer
+    Mailer --> Gmail
+    Mailer -.->|if Gmail fails| Brevo
+    Gmail --> Inbox
+    Brevo -.-> Inbox
+    Res -.->|owner alert| WA
+    Notify -.->|opted-in guests| WA
+```
+
+The website is the only part that sends email or WhatsApp. The sheet never mails anyone itself: when the owner changes a Status, its script asks the site to send the message, so every template and calendar invite lives in one place.
+
+### The four journeys
+
+| Journey | Path through the system |
+|:--|:--|
+| **Guest books a table** | Form → `/api/reservations` (10 checks) → row added to the sheet as **Pending** → owner email, then guest email → guest sees the reference |
+| **Owner confirms** | Owner sets **Status** to Confirmed, Declined or Cancelled → Apps Script on-edit trigger → `/api/notify` → guest email (+ calendar invite, + WhatsApp if opted in) → **Guest notified** column filled in |
+| **Day-before reminder** | Hourly Apps Script trigger (10 am–10 pm) → tomorrow's Confirmed rows → `/api/notify` → reminder email → **Reminder sent** marked |
+| **Guest changes or cancels** | Signed link in the email → `/booking/[reference]` → `/api/booking` → sheet updated (a change goes back to Pending) → guest and owner emailed |
+
+<details>
+<summary><b>The 10 checks every booking passes in <code>/api/reservations</code></b></summary>
+<br>
+
+They run cheapest first, so spam is turned away before it costs an email.
+
+| # | Check | If it fails |
+|:--:|:--|:--|
+| 1 | The request comes from this site | `403` |
+| 2 | It's JSON and under 10 KB | `415` / `400` |
+| 3 | The hidden spam field is empty | Bots get a fake `200` |
+| 4 | Fewer than 5 tries from this IP in 10 minutes | `429` |
+| 5 | Fields are valid: future date within a year, 10:00–23:30, 15-minute slots, not a closed day, 1–10 guests | `422` with field errors |
+| 6 | Cloudflare Turnstile token is real (let through if Cloudflare itself is down) | `400` |
+| 7 | Fewer than 3 requests today for this email, and for this phone | `429` |
+| 8 | Email is set up on the server | `503`, success is never faked |
+| 9 | Sheet: not a duplicate (same email or phone within 60 min) and the time isn't full | `200` "already have it" / `422` on the time field |
+| 10 | The booking reached the owner (sheet saved or owner email sent) | `502` only if neither worked |
+
+</details>
+
+<details>
+<summary><b>What each person sees when a part fails</b></summary>
+<br>
+
+| What happened | Guest sees | Owner gets |
+|:--|:--|:--|
+| Everything worked | "Request received" + reference | Pending row + email |
+| Sheet unreachable, owner email sent | "Request received" | Email with a red "add this row by hand" note |
+| Row saved, owner email failed | "Request received" | The row in the sheet |
+| Owner has it, guest email failed | "Received, but the confirmation email couldn't be sent" | Row marked **Guest not emailed** |
+| Same email or phone within 60 min | "We already have your request for …" | Nothing new |
+| That time is full | Error on the time field | Nothing |
+| Gmail over its daily limit | "Request received" | Sent through Brevo; alert email at most every 6 hours |
+| Sheet down **and** owner email failed | "Hasn't reached us, please call" | Nothing (logged with the reference) |
+
+</details>
+
+### How code reaches the live site
+
+```mermaid
+flowchart LR
+    Laptop["Your laptop<br/>code + .env.local"] -->|git push| GitHub["GitHub<br/>code only, no secrets"]
+    GitHub -->|every push| CI["GitHub Actions<br/>typecheck · lint · test · build"]
+    GitHub -->|push to main| Build["Vercel build<br/>env vars applied"]
+    Build --> Live(["Live site"])
+    Script["scripts/google-apps-script.gs"] -.->|copy and paste by hand| Editor["Sheet's Apps Script editor<br/>set SECRET and SITE_URL"]
+    Editor -->|Manage deployments → New version| WebApp["Web app /exec URL<br/>stays the same"]
+    WebApp -.->|URL + secret saved as env vars| Build
+```
+
+The website redeploys itself on every push to `main`. The Apps Script doesn't: after changing it, paste it into the sheet's script editor and publish a **New version** (a "New deployment" creates a new URL that then has to be updated on Vercel).
 
 <br>
 
