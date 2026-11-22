@@ -25,6 +25,8 @@ export function LanguageProvider({ children }: { children: ReactNode }) {
     } catch {
       // storage blocked — stay in English
     }
+    // Read after hydration: the server always renders English, so reading storage during render would mismatch.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (isLang(saved) && saved !== "en") setLangState(saved);
   }, []);
 

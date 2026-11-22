@@ -21,12 +21,12 @@ export default function Footer() {
               <T k="footer.explore" />
             </h2>
             <ul>
-              <li><a href="/#home"><T k="nav.home" /></a></li>
-              <li><a href="/#about"><T k="nav.about" /></a></li>
-              <li><a href="/#menu"><T k="nav.menu" /></a></li>
+              <li><Link href="/#home"><T k="nav.home" /></Link></li>
+              <li><Link href="/#about"><T k="nav.about" /></Link></li>
+              <li><Link href="/#menu"><T k="nav.menu" /></Link></li>
               <li><Link href="/events"><T k="nav.events" /></Link></li>
-              <li><a href="/#reservation"><T k="footer.reservations" /></a></li>
-              <li><a href="/#contact"><T k="nav.contact" /></a></li>
+              <li><Link href="/#reservation"><T k="footer.reservations" /></Link></li>
+              <li><Link href="/#contact"><T k="nav.contact" /></Link></li>
             </ul>
           </nav>
           <div>

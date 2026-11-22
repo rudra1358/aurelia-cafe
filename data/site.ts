@@ -137,7 +137,7 @@ export const site = {
   ] as { quote: string; author: string; source?: string }[],
 
   legal: {
-    lastUpdated: "19 November 2026",
+    lastUpdated: "23 November 2026",
     /** OWNER TODO: e.g. "Vercel". Shown in the Privacy Policy. */
     hostingProvider: null as string | null,
     /** OWNER TODO: e.g. "6 months after your visit". */

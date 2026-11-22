@@ -35,7 +35,6 @@ const PHONE_RE = /^\+?\d{10,15}$/;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 // Control characters (incl. newlines) are never valid in single-line fields.
-// eslint-disable-next-line no-control-regex
 const CONTROL_RE = /[\u0000-\u001f\u007f]/;
 
 /** Current date (YYYY-MM-DD) and time (HH:MM) in the café's time zone. */

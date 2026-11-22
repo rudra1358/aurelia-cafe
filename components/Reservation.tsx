@@ -8,6 +8,7 @@ import cheers from "@/public/images/cheers.jpg";
 import { site, telHref } from "@/data/site";
 import { upcomingEvents } from "@/data/events";
 import { formatDate, formatTime } from "@/lib/format";
+import { trackBookingRequested, trackBookingStarted } from "@/lib/analytics";
 import { useT } from "./Language";
 import {
   addDays,
@@ -80,6 +81,8 @@ export default function Reservation() {
   /** True when Turnstile reported an error (e.g. domain not allowed, script blocked) — waiting won't help. */
   const turnstileFailed = useRef(false);
   const [turnstileReady, setTurnstileReady] = useState(false);
+  /** "Booking started" is sent once per page view, on the first keystroke or pick. */
+  const startedTracked = useRef(false);
 
   // Computed on the client to avoid a server/client date mismatch during hydration, and kept
   // current so a tab left open past midnight doesn't offer yesterday.
@@ -104,6 +107,8 @@ export default function Reservation() {
     const id = new URLSearchParams(window.location.search).get("event");
     if (!id) return;
     const ev = upcomingEvents(nowInCafeTimeZone().date).find((e) => e.id === id);
+    // The URL is only known in the browser, so this runs after hydration.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (ev) setValues((v) => ({ ...v, event: ev.id, date: ev.date, time: ev.time }));
   }, []);
 
@@ -157,6 +162,10 @@ export default function Reservation() {
   const onChange = (field: ReservationField) => (e: ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
     const value = e.target.value;
     setValues((v) => ({ ...v, [field]: value }));
+    if (!startedTracked.current) {
+      startedTracked.current = true;
+      trackBookingStarted();
+    }
     // Tell the visitor straight away when they pick a day the café is closed.
     const closed = field === "date" && value ? closedDateMessage(value) : null;
     if (closed) setErrors((er) => ({ ...er, date: closed }));
@@ -214,6 +223,7 @@ export default function Reservation() {
       } = await res.json().catch(() => ({}));
 
       if (res.ok && data.ok) {
+        trackBookingRequested({ kind: check.data.event ? "event" : "table", guests: check.data.guests, duplicate: !!data.duplicate });
         setSubmitted({
           firstName: check.data.name.split(" ")[0],
           email: check.data.email,

@@ -40,6 +40,8 @@ export default function ManageBooking({ token, initial, firstName }: { token: st
   const [notice, setNotice] = useState("");
   const [form, setForm] = useState({ date: initial.date, time: initial.time, guests: String(initial.guests) });
   const [today, setToday] = useState<string>();
+  // "Today" is read in the browser after hydration so a cached server render never shows a stale date.
+  // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => setToday(nowInCafeTimeZone().date), []);
 
   const { maxGuests, maxDaysAhead, slotMinutes } = site.reservations;

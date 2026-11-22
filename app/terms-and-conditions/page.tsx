@@ -3,12 +3,13 @@ import LegalPage, { OwnerReview, type LegalSection } from "@/components/LegalPag
 import ContactBlock from "@/components/ContactBlock";
 import { mailtoHref, site, telHref } from "@/data/site";
 import { formatTime } from "@/lib/format";
+import { ogImages } from "@/lib/og-image";
 
 export const metadata: Metadata = {
   title: "Terms & Conditions",
   description: "The terms that apply to using the Aurelia website and requesting a table reservation.",
   alternates: { canonical: "/terms-and-conditions" },
-  openGraph: { title: "Terms & Conditions — Aurelia", url: "/terms-and-conditions" },
+  openGraph: { title: "Terms & Conditions — Aurelia", url: "/terms-and-conditions", images: ogImages },
 };
 
 const { legal, reservations } = site;

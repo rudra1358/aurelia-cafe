@@ -76,7 +76,7 @@ Designed for phone, tablet and desktop. Semantic HTML, keyboard navigation, visi
 <td valign="top">
 
 ### 🔎 SEO ready
-Metadata, Open Graph and Twitter cards, a sitemap, robots.txt and structured data for a café (`CafeOrCoffeeShop`).
+Metadata, a generated link-preview image for WhatsApp and social apps (`app/opengraph-image.tsx`), a sitemap, robots.txt and structured data for a café (`CafeOrCoffeeShop`).
 
 </td>
 <td valign="top">
@@ -231,11 +231,16 @@ npm run dev                    # → http://localhost:3000
 | `npm run dev` | Start the development server |
 | `npm run build` · `npm start` | Production build · serve it |
 | `npm run typecheck` | TypeScript check |
+| `npm run lint` | ESLint (Next.js rules) |
+| `npm test` · `npm run test:watch` | Unit and API tests (Vitest), once · on every save |
+| `npm run check` | Typecheck, lint and tests together: run before pushing |
 | `npm run test:email` | Log in to Gmail SMTP and send one test email to yourself |
 | `npm run test:email:fallback` | Log in to the backup provider and send one test email to `OWNER_EMAIL` |
 | `npm run test:sheet` | Add one test row to the Google Sheet |
 
-> Requires **Node.js 20.9+**.
+> Requires **Node.js 22.12+** (CI uses Node 24).
+
+Every push and pull request runs typecheck, lint, tests and a production build on GitHub Actions (`.github/workflows/ci.yml`). The tests cover the booking rules in `lib/validation.ts` (dates, times, closed days, events, guests) and every outcome of `POST /api/reservations`, with email and the sheet mocked, so they need no secrets.
 
 ### Environment variables
 
@@ -479,6 +484,7 @@ app/
 ├── events/                     /events
 ├── privacy-policy/             /privacy-policy
 ├── terms-and-conditions/       /terms-and-conditions
+├── opengraph-image.tsx         Link-preview image (also twitter-image.tsx)
 └── sitemap.ts · robots.ts · icon.svg · not-found.tsx
 components/                     Navbar · Hero · About · FeaturedItems · Menu · Events
                                 Reservation · Social · Contact · Footer · LegalPage
@@ -496,11 +502,15 @@ lib/
 ├── booking-token.ts            Signed "Change or cancel" links
 ├── ics.ts                      Calendar invites
 ├── whatsapp.ts                 WhatsApp Cloud API
+├── analytics.ts                Booking events + URL scrubbing for analytics
+├── og-image.tsx                Draws the link-preview image
 └── sheets.ts                   Google Sheets via Apps Script
 scripts/
 ├── google-apps-script.gs       Paste into the Google Sheet
 ├── test-email.mjs              SMTP check
 └── test-sheet.mjs              Sheet check
+tests/                          Vitest: validation, reservations API, analytics
+.github/workflows/ci.yml        CI: typecheck, lint, test, build
 docs/screenshots/               Images used in this README
 ```
 
@@ -514,6 +524,7 @@ Deploy to [Vercel](https://vercel.com/new) (recommended for Next.js) or any Node
 2. Import it in Vercel.
 3. Add every variable from `.env.local` under **Settings → Environment Variables**, with `NEXT_PUBLIC_SITE_URL` set to your live domain.
 4. Deploy, then submit a test reservation on the live site.
+5. Optional: turn on **Analytics** in the Vercel project. It's cookieless and records page views plus two events, `Booking started` (first keystroke in the form) and `Booking requested` (the request reached you, with table/event and party size), so you can see how many visitors go on to book. No names, contact details or booking references are sent, and manage-booking links are reported as `/booking/[reference]`. Custom events need a Vercel Pro plan; on Hobby you still get page views, and the bookings themselves are in the Google Sheet. On other hosts the analytics script simply isn't loaded.
 
 <br>
 

@@ -3,6 +3,7 @@ import { Cormorant_Garamond, DM_Sans, Noto_Sans_Devanagari, Noto_Sans_Gujarati }
 import { site } from "@/data/site";
 import DemoBanner from "@/components/DemoBanner";
 import { LanguageProvider } from "@/components/Language";
+import SiteAnalytics from "@/components/SiteAnalytics";
 import "./globals.css";
 
 // Gujarati and Hindi text (language toggle). Not preloaded: the browser only downloads
@@ -55,13 +56,12 @@ export const metadata: Metadata = {
     siteName: site.name,
     title: "Aurelia — Café in Sindhu Bhavan, Ahmedabad",
     description: site.description,
-    images: [{ url: "/images/hero-interior.jpg", width: 1600, height: 1067, alt: "Inside Aurelia — a sunlit café corner" }],
+    // The preview image comes from app/opengraph-image.tsx and app/twitter-image.tsx.
   },
   twitter: {
     card: "summary_large_image",
     title: "Aurelia — Café in Sindhu Bhavan, Ahmedabad",
     description: site.description,
-    images: ["/images/hero-interior.jpg"],
   },
   robots: { index: true, follow: true },
 };
@@ -85,6 +85,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           Skip to content
         </a>
         <LanguageProvider>{children}</LanguageProvider>
+        {/* Vercel serves the analytics script itself; on other hosts it would 404. */}
+        {process.env.VERCEL === "1" && <SiteAnalytics />}
       </body>
     </html>
   );

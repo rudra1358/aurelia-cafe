@@ -69,9 +69,9 @@ export default function Navbar({ variant = "overlay" }: { variant?: "overlay" | 
           </ul>
           <div className="nav-end">
             <LanguageSwitch className="nav-lang" />
-            <a className="btn nav-cta" href="/#reservation">
+            <Link className="btn nav-cta" href="/#reservation">
               {t("nav.reserve")}
-            </a>
+            </Link>
             <button
               className="burger"
               type="button"
@@ -91,16 +91,16 @@ export default function Navbar({ variant = "overlay" }: { variant?: "overlay" | 
           <ul>
             {links.map((l) => (
               <li key={l.href}>
-                <a href={l.href} onClick={close}>
+                <Link href={l.href} onClick={close}>
                   {t(l.key)}
                   <ArrowRight size={22} strokeWidth={1.2} aria-hidden />
-                </a>
+                </Link>
               </li>
             ))}
           </ul>
-          <a className="btn btn-dark" href="/#reservation" onClick={close}>
+          <Link className="btn btn-dark" href="/#reservation" onClick={close}>
             {t("nav.reserve")}
-          </a>
+          </Link>
           <LanguageSwitch className="mp-lang" />
           <div className="mp-meta">
             <a href={telHref}>{site.contact.phoneDisplay}</a>

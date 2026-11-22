@@ -2,12 +2,13 @@ import type { Metadata } from "next";
 import LegalPage, { OwnerReview, type LegalSection } from "@/components/LegalPage";
 import ContactBlock from "@/components/ContactBlock";
 import { site } from "@/data/site";
+import { ogImages } from "@/lib/og-image";
 
 export const metadata: Metadata = {
   title: "Privacy Policy",
   description: "How Aurelia collects, uses and protects the information you share through our website and reservation requests.",
   alternates: { canonical: "/privacy-policy" },
-  openGraph: { title: "Privacy Policy — Aurelia", url: "/privacy-policy" },
+  openGraph: { title: "Privacy Policy — Aurelia", url: "/privacy-policy", images: ogImages },
 };
 
 const { legal } = site;
@@ -45,6 +46,12 @@ const sections: LegalSection[] = [
           Like most websites, the service that hosts our site may automatically record basic technical information — such
           as your IP address, browser type and the pages requested — to deliver and protect the website. Our server also
           uses your IP address briefly, in memory, to limit repeated form submissions.
+        </p>
+        <p>
+          To understand how many visitors use the site and how many go on to request a table, we use Vercel Web Analytics.
+          It does not use cookies, does not identify you or follow you across other websites, and receives only the page
+          visited, the referring site, your browser, device type and country, and whether a reservation request was sent
+          (with the number of guests). It never receives your name, contact details or booking reference.
         </p>
       </>
     ),
