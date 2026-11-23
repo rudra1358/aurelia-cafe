@@ -83,7 +83,8 @@ BOOKING_OR_RESERVATION_REQUIREMENTS: "[...]"            # 🟡 Fields, party/slo
 ENQUIRY_FORM_REQUIREMENTS: "[...]"                      # 🟡 Fields and routing for contact / quote / lead forms
 ORDER_OR_ECOMMERCE_REQUIREMENTS: "[...]"                # 🟡 Catalogue size, cart, delivery, inventory
 PAYMENT_REQUIREMENTS:   "[none | deposits | full checkout | invoices]"  # 🟡 Provider preference (e.g. Razorpay, Stripe)
-ADMIN_REQUIREMENTS:     "[none | spreadsheet | dashboard | CMS]"        # 🟡 Who edits what, how often, technical skill
+ADMIN_REQUIREMENTS:     "[none | spreadsheet | owner-editor | dashboard | CMS]"  # 🟡 Who edits what (bookings? menu, prices,
+                                                        #    events?), how often, technical skill. See §7.3
 
 # ── Infrastructure ─────────────────────────────────────────
 EMAIL_PROVIDER:         "[gmail-smtp | brevo-smtp | brevo-api | apps-script-gmail | other | decide]"  # 🟡 🟢 see §8.1
@@ -234,17 +235,23 @@ Each phase ends with its deliverable. Don't skip the gates.
 app/ (or src/pages)          routes, layouts, metadata, route handlers
   api/<workflow>/route.ts    one handler per workflow: orchestration only
   <legal>/page.tsx           privacy-policy, terms-and-conditions, …
+  admin/page.tsx + actions.ts  owner editor (§7.3): password sign-in, Server Actions, noindex
   robots.ts  sitemap.ts  opengraph-image.tsx  icon.svg  not-found.tsx
 components/                  presentational + client components (PascalCase.tsx)
+  admin/                     owner editor UI (kept apart from the public components)
 data/                        ALL business content & settings (single source of truth)
   site.ts                    identity, contact, location, hours, policies, feature flags, online links
-  <catalogue>.ts             menu / services / products / team / events (typed)
+  <catalogue>.ts             menu / services / products / team / events (typed). If the owner edits them
+                             at /admin, these are only the starting content and the fallback
   translations.ts            UI strings per language (if multilingual)
 lib/                         logic & integrations, server-only where applicable
   validation.ts              shared client+server validation (pure, unit-tested)
   mailer.ts                  provider abstraction: primary + optional fallback
   email-templates.ts         HTML + text templates, all input escaped
   <store>.ts                 sheets.ts / db.ts: system-of-record client
+  content-store.ts           owner-edited content: storage backends + cached read + save (§7.3)
+  site-content.ts            pure validation/cleaning of owner edits (shared by editor and server)
+  admin-auth.ts              owner password check + signed HttpOnly session cookie
   rate-limit.ts  turnstile.ts  http.ts (sameOrigin, clientIp, json, safeEqual)
   format.ts  analytics.ts  ics.ts  tokens.ts  …
 scripts/                     test-email.mjs, test-<service>.mjs, google-apps-script.gs, seed/migrate
@@ -271,7 +278,8 @@ README.md  DECISIONS.md      setup, architecture, decisions, checklist
 | Owner wants to see and edit submissions with zero training; volume < ~50k rows/year; free | **Google Sheets via Apps Script web app** (§8.3). The sheet doubles as the admin panel (status dropdown, triggers). |
 | Relational data, auth, higher volume, reporting | Hosted Postgres (Neon, Supabase, Vercel Postgres) + ORM + a small admin UI or CMS |
 | Only notifications, nothing to keep | Email only. Still log failures. |
-| Content editing | Headless CMS, not a database |
+| Owner edits a small catalogue (menu, prices, events, opening notices) and nothing else | **Owner editor at `/admin`** (§7.3): content saved as one validated JSON document in a store the project already has (hidden sheet tab via Apps Script, Upstash Redis key, or a local file off-Vercel). No new account, no CMS |
+| Content editing by several people, rich text, images, drafts, roles | Headless CMS, not a database and not a bespoke admin |
 
 ### 5.4 Backend request pipeline (apply to every public POST endpoint)
 
@@ -366,7 +374,8 @@ For each feature: **include when** → **must-haves** → **acceptance criteria*
 | **Legal pages** | Always: Privacy + Terms (plus Cookies or Refund if relevant) | Written from the actual data flows and processors; 🔵 policies from config; "draft for owner review" banner flag; last-updated date | Every processor used is listed; no unsupported claims |
 | **Multilingual switch** | Audience needs it | UI strings in `translations.ts`, `lang` attribute updated, fonts for each script, choice remembered | Clearly state what's *not* translated (e.g. legal pages, emails) |
 | **Self-service links** | Bookings or orders that change | Signed (HMAC) links with reference + token, status-aware rules (e.g. no changes after start time) | Tampered tokens rejected; changes re-enter review |
-| **Admin** | Owner must manage submissions | Prefer a spreadsheet with status dropdowns + triggers, or a CMS, over a bespoke dashboard unless one is required | Owner can complete the whole loop without a developer |
+| **Admin: submissions** | Owner must manage bookings or enquiries | Prefer a spreadsheet with status dropdowns + triggers over a bespoke dashboard | Owner can complete the whole loop without a developer |
+| **Admin: content editor** | Owner changes menu items, prices, sections or events themselves | §7.3 | §7.3 |
 | **Demo banner** | Concept or portfolio builds | Slim, fixed, configurable; short mobile version; links to the author | Off with one flag |
 | **404 / error pages** | Always | Branded, with a way home | — |
 
@@ -393,6 +402,21 @@ For each feature: **include when** → **must-haves** → **acceptance criteria*
 ### 7.2 Contact / enquiry / lead form
 - **Fields** fit the purpose (name, email, phone optional, subject or service, message, consent). Use the same validation, abuse controls and honest states as bookings.
 - **Routing:** owner notification with `Reply-To` set to the enquirer, and an optional customer acknowledgement. Store enquiries if the client wants a record (sheet or CRM).
+
+### 7.3 Owner content editor at `/admin` (proven pattern)
+**Include when** the owner needs to add, change or remove catalogue content (menu items and prices, whole new sections such as *Desserts*, events) without a developer, and a CMS would be overkill.
+
+- **Access is the owner's only:** one `ADMIN_PASSWORD` env var (≥ 10 characters; admin switched off and explained on the page when it's missing or short). Constant-time comparison. On sign-in, set an **HttpOnly, SameSite=Strict, Secure** cookie scoped to `/admin`, holding `expiry.HMAC(expiry)` keyed from the password, so changing the password signs everyone out. 12-hour sessions. Rate-limit sign-in attempts per IP.
+- **Invisible to customers:** not linked anywhere, `robots: noindex` on the page, `Disallow: /admin` in robots.txt, left out of the sitemap. Being hard to find is not the protection: the password is.
+- **Every write re-checks the session on the server** (Server Actions or a route handler with the same-origin check). Never trust the page.
+- **Validate like any public input:** one pure `sanitizeContent()` used by the editor (instant feedback) and the server (truth). Length caps, price ranges, valid dates and times, no duplicate names in a group, control characters stripped, stable ids kept and new ones slugged and de-duplicated. Error messages name the exact place: *"Desserts → Cakes, item 2 needs a price."*
+- **Storage:** one JSON document `{ menu, events, updatedAt }` in the first available backend: Redis key → hidden sheet tab via Apps Script (`getContent` / `saveContent`; split across cells under 50k characters, each chunk prefixed with a character such as `~` so a chunk starting with `=` is never read as a formula) → local file (`.data/`, git-ignored) when not on a read-only host. An override env var (e.g. `SITE_CONTENT_STORE=file`) lets you test without touching live data.
+- **Starting content and fallback:** the typed `data/` files seed the editor until the first save. If storage can't be reached, public pages fall back to the last good copy, then to the `data/` files; the editor refuses to load rather than risk overwriting.
+- **Freshness:** public pages read through a cache tagged e.g. `site-content`; a save calls `updateTag` / `revalidatePath`, so guests see changes immediately.
+- **No lost work:** optimistic concurrency (send the `updatedAt` you started from; refuse a save if it changed elsewhere), unsaved-changes warning, **Discard**, confirm before deleting a section or category, and a **Restore** box that offers anything from the starting content that's missing (whole section, category or single items) at its original position, plus **Restore all**. Put it at the top, where the owner looks.
+- **Everything that depends on the content reads the stored copy:** the public menu and events, *and* server-side validation (e.g. a booking for an event checks the owner's current events, not the seed file).
+- **Owner-friendly UI:** mobile-first, plain words ("One price / Sizes / Market price", "Food type"), a sticky save bar showing the result ("Saved — guests see the new version now"), where changes are stored, and a "View site" link.
+- **Accept when:** a non-technical owner can add a new section with items and prices, edit and remove events, undo a mistaken delete, and see it live within seconds; a visitor without the password can't see or change anything; storage outages never blank the public menu.
 
 ---
 
@@ -483,7 +507,7 @@ For each workflow you implement, define: **trigger → required fields → backe
 **Script design** (`scripts/google-apps-script.gs`, versioned in the repo):
 
 - `doPost(e)`: parse JSON, then check the secret with a placeholder guard (`if (!SECRET || SECRET === PLACEHOLDER || body.secret !== SECRET) return unauthorized`). **Keep the real secret in Script Properties** (`PropertiesService.getScriptProperties().getProperty('SECRET')`), not in the code, so it can't leak when the file is committed.
-- Use `LockService.getScriptLock().waitLock(15000)` around writes. Dispatch on `body.action` (`add` / `get` / `change` / `cancel` / `mark…`). Always return `ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(JSON)`.
+- Use `LockService.getScriptLock().waitLock(15000)` around writes. Dispatch on `body.action` (`add` / `get` / `change` / `cancel` / `mark…`, plus `getContent` / `saveContent` when the sheet also stores owner-edited content, §7.3). Always return `ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(JSON)`.
 - `doGet()` returns a small "deployment works" message, for health checks.
 - **Write by column name:** map header text to an index, re-create missing required headers at the end, so the owner can reorder columns safely.
 - **Formula-injection guard:** prefix values starting with `= + - @` with `'`.
@@ -533,6 +557,7 @@ Add `script.send_mail` only if the script itself sends mail.
 | "not allowed on cells in typed columns" | Sheet converted into a Table | Table menu → **Revert to unformatted data** (not "Delete table"); keep formatting in try/catch |
 | `You do not have permission to call UrlFetchApp.fetch` | Scope not authorised | Add the manifest scopes, run a function to re-authorise, publish a new version |
 | Owner still gets "add manually" emails after fixing | Host env still old, or not redeployed | Update the env on the host for Production, then redeploy; search the logs for `[sheets]` |
+| New action fails with "missing reservation" (or similar) | The deployed script is an older version without that action, so it fell through to the default action | Paste the current script and publish a **New version**. Have the website detect this reply and log "Apps Script is out of date" |
 
 ### 8.4 Spam & abuse protection
 - **Honeypot** field: a visually hidden input named something plausible (e.g. `company`). If it's filled, return a fake success.
@@ -599,6 +624,7 @@ User action → Frontend validation → API (pipeline §5.4) → System of recor
 - [ ] Secrets compared in constant time; signed links use HMAC with a separate signing secret (rotating it invalidates old links: document that).
 - [ ] Security headers: CSP allowing only what's used (list each third party), HSTS, `X-Frame-Options: DENY` / `frame-ancestors 'none'`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`, `Permissions-Policy` (deny what isn't used), COOP; `poweredByHeader: false`.
 - [ ] CORS: no wildcard on endpoints that change data; same-origin by default.
+- [ ] Owner admin (if any, §7.3): password only in env, constant-time check, signed HttpOnly/SameSite=Strict/Secure session cookie scoped to the admin path, sign-in rate limit, session re-checked on every write, admin input validated like public input, page `noindex` and disallowed in robots.txt.
 - [ ] Dependencies: minimal, pinned via the lockfile, `npm audit` reviewed.
 - [ ] Logs: no secrets, minimal personal data; errors carry references.
 - [ ] Personal data: private storage (sheet shared only with the owner), local privacy law named (e.g. India DPDP Act, GDPR), retention configured.

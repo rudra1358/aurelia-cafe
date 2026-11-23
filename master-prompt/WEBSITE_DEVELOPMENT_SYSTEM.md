@@ -1,9 +1,9 @@
 # Universal Website Development System
 
-Built by reverse-engineering the Aurelia café project (19–23 November 2026): 7 Claude Code sessions, 12 commits, 89 tracked files. Sources:
+Built by reverse-engineering the Aurelia café project (19–23 November 2026): 8 Claude Code sessions, 18 commits, 102 tracked files. Sources:
 
 - The full transcripts of every session in this project folder, read in order.
-- The git history (`a5cb848` → `65ab13e`).
+- The git history (`a5cb848` → `a771b89`). The owner admin editor (steps 21–23 in A.2) was added after this document was first written.
 - The source code as it is now: `app/`, `components/`, `data/`, `lib/`, `scripts/`, `tests/`, `.env.example`, `next.config.ts`, CI.
 
 Wherever the discussion and the code disagree, the code wins. Ideas that were discussed but never built are listed separately in A.4.
@@ -68,6 +68,9 @@ The project began with one long, structured brief, sent through the `/design` co
 | 18 | 20 Nov | **Group 3: features** | Status change in the sheet → Apps Script trigger → **`/api/notify`** → the website sends the email. Templates live in one place, and a "Guest notified" column stops double sends. **Signed manage-booking links** (HMAC) open `/booking/[reference]` for changes and cancellations; a change goes back to Pending. Hourly reminder for tomorrow's confirmed bookings. WhatsApp Cloud API template messages, guest opt-in only. `.ics` calendar invite. Menu search, veg/non-veg marks, Jain/vegan labels and allergens, **hidden until real data is entered**. Reviews, Instagram, Swiggy and Zomato **shown only once configured**. `/events` page, where "Book a seat" pre-fills the form. EN/ગુજરાતી/हिन्दी interface switch. | Sample events appear only in demo mode, labelled as samples. Nav CTA hidden at 900–1180 px so the language switch fits. |
 | 19 | 20 Nov | **Group 3 debugging (live)** | (a) **Every sheet call returned "unauthorized"**: the real secret had been pasted into the placeholder comparison too. Fixed in the repo, and the secret, now leaked in git history, was rotated. (b) `installTriggers` gave an "unknown error": the multiple-accounts problem again, so triggers were created by hand. (c) **Bookings failed to save**: the sheet had been turned into a Google Sheets *Table*, whose typed columns reject `setDataValidation` and `setNumberFormat`. Formatting now runs in try/catch, and the table was reverted with "Revert to unformatted data". (d) "Too many requests": the rate limiter was doing its job against repeated tests. (e) Owner still got "add manually" emails: Vercel had the old secret or hadn't been redeployed. (f) `UrlFetchApp` permission denied: fixed with explicit `oauthScopes` in `appsscript.json`, then re-authorising and publishing a new version. | Every fix was confirmed with read-only probes to the live endpoints. |
 | 20 | 22–23 Nov | **Group 4: engineering quality** | **Vitest**: 96 tests, 71 of them for `validateReservation`, plus route tests with every external service mocked. **ESLint** (Next rules): internal links switched to `next/link`. **GitHub Actions CI**: typecheck → lint → test → build. **Vercel Web Analytics**: cookieless, only on Vercel builds, with "Booking started" and "Booking requested" events, and booking references and tokens scrubbed from URLs. **Build-time OG image**: a 75 KB JPEG, because WhatsApp drops previews much over 300 KB. | **Bug found and fixed:** child pages had no `og:image`, because their own `openGraph` object replaced the root one. Privacy Policy updated for analytics. Node 22.12+ required. |
+| 21 | 23 Nov | **Owner admin editor** | The owner wanted to add menu items, whole sections (e.g. Desserts) and events themselves, with customers never seeing the feature. Built `/admin`: password sign-in (`ADMIN_PASSWORD`, HMAC-signed HttpOnly cookie scoped to `/admin`, rate-limited), menu and events editors, validation shared by editor and server, optimistic concurrency, and a sticky save bar. Storage: Upstash Redis → hidden sheet tab via new Apps Script `getContent` / `saveContent` actions → local `.data/` file. Public pages and event-booking validation now read the saved copy through a tagged cache, refreshed on save. | Tested in the browser against a local file store (`SITE_CONTENT_STORE=file`) so the live sheet wasn't touched. The production build showed the live sheet still ran the old script ("Apps Script is out of date"), so the owner had to paste the new script and publish a New version. |
+| 22 | 23 Nov | **Restore a deleted section** | The owner deleted part of the original menu. Added a Restore button for whole sections from the starting menu. | Deployed, but the owner saw no button: they had deleted a category, not the section. |
+| 23 | 23 Nov | **Restore at every level** | Restore now finds missing sections, categories and single items, puts them back in their original place, offers "Restore all", and sits at the top of the Menu tab. Moved or renamed things aren't offered. | 113 tests. Lesson: undo must cover every level the owner can delete, where they'll see it. |
 
 ## A.3 Final requirements (current state; these supersede earlier versions)
 
@@ -80,7 +83,8 @@ The project began with one long, structured brief, sent through the `/design` co
 | Storage | Email only | Google Sheet via Apps Script is the system of record (status, notes, audit columns). Email is the notification layer. |
 | Success rule | Success only if both emails sent | Success when the booking **reached the owner** (sheet saved OR owner email sent). Honest partial messages otherwise. 502 only when nothing reached the owner. |
 | Duplicates | Exact email + date + time | Email **or** phone, same day, within 60 minutes |
-| Admin | None | The Google Sheet *is* the admin panel. Changing Status emails the guest (and WhatsApp if opted in) with a calendar invite. |
+| Admin | None | **Bookings:** the Google Sheet is the admin panel. Changing Status emails the guest (and WhatsApp if opted in) with a calendar invite. **Menu and events:** a password-protected owner editor at `/admin`, saved to a hidden sheet tab (or Redis, or a local file). |
+| Menu and events source | `data/menu.ts`, `data/events.ts`, edited by a developer | Edited by the owner at `/admin`. The `data/` files are the starting content and the fallback. |
 | Guest self-service | None | Signed "change or cancel" link → `/booking/[reference]` |
 | Spam | Honeypot + in-memory IP limit | Honeypot + Turnstile + per-IP/email/phone limits (Redis) + same-origin/JSON-only + body-size cap |
 | Portfolio label | "AI-assisted · vibe-coded" | "AI-assisted build" |
@@ -90,11 +94,12 @@ The project began with one long, structured brief, sent through the `/design` co
 
 **Implemented and verified in code:**
 
-- **Pages:** home sections (Hero, About, Featured, Menu, Events, Reservation, Social/Reviews, Contact + Map, Footer), `/events`, `/booking/[reference]`, `/privacy-policy`, `/terms-and-conditions`, `not-found`.
+- **Pages:** home sections (Hero, About, Featured, Menu, Events, Reservation, Social/Reviews, Contact + Map, Footer), `/events`, `/booking/[reference]`, `/privacy-policy`, `/terms-and-conditions`, `not-found`, and the owner-only `/admin` editor.
+- **Owner admin (`/admin`):** password sign-in (`ADMIN_PASSWORD`, signed HttpOnly cookie, rate-limited), Server Actions for sign-in, sign-out and save; menu editor (sections, categories, items, one price / sizes / market price, food type, bestseller, Jain/vegan, allergens, description, reorder, delete); events editor (add, edit, delete, clear past); validation shared by editor and server; optimistic concurrency; Restore for deleted sections, categories or items.
 - **Generated routes:** `robots.ts`, `sitemap.ts`, `icon.svg`, `opengraph-image.tsx`, `twitter-image.tsx`.
 - **API:** `POST /api/reservations`, `POST /api/booking` (get/change/cancel with token), `POST /api/notify` (secret-authenticated callback from Apps Script).
-- **Libraries (`lib/`):** validation, mailer (primary + fallback + quota pause + alerts), email templates, ICS, booking tokens (HMAC), sheets client, rate limit (Upstash/in-memory), Turnstile, WhatsApp, notifications, analytics scrubber, OG image renderer, formatters, HTTP helpers (`sameOrigin`, `clientIp`, `safeEqual`, body reader).
-- **Apps Script:** web app (`doPost` with secret + `LockService`), write-by-column-name, duplicates, capacity, status triggers, reminders, archive, manage-booking lookups.
+- **Libraries (`lib/`):** content store (Redis → sheet → file, cached read, save), content validation (`site-content.ts`), admin auth, menu restore, validation, mailer (primary + fallback + quota pause + alerts), email templates, ICS, booking tokens (HMAC), sheets client, rate limit (Upstash/in-memory), Turnstile, WhatsApp, notifications, analytics scrubber, OG image renderer, formatters, HTTP helpers (`sameOrigin`, `clientIp`, `safeEqual`, body reader).
+- **Apps Script:** web app (`doPost` with secret + `LockService`), write-by-column-name, duplicates, capacity, status triggers, reminders, archive, manage-booking lookups, and `getContent` / `saveContent` for the owner's menu and events (hidden "Website content" tab).
 - **Operations scripts:** `test:email`, `test:email:fallback`, `test:sheet`, `check`.
 - **Quality:** Vitest, ESLint, CI, security headers, JSON-LD structured data, AVIF/WebP images, fonts self-hosted through `next/font`.
 
@@ -104,7 +109,7 @@ The project began with one long, structured brief, sent through the `/design` co
 - Per-table double booking. There are no tables in the data model, so capacity is counted per time window instead.
 - Brevo **REST API**. Brevo is used through **SMTP relay** only.
 - Apps Script `MailApp` sending. All email goes from the website.
-- reCAPTCHA (Turnstile chosen), Plausible (Vercel Analytics chosen), Twilio (Meta Cloud API chosen), Resend (its free tier was too small), an admin dashboard (the sheet is the admin panel), a database.
+- reCAPTCHA (Turnstile chosen), Plausible (Vercel Analytics chosen), Twilio (Meta Cloud API chosen), Resend (its free tier was too small), a database, a headless CMS (the small `/admin` editor covers menu and events), a bookings dashboard (the sheet stays the bookings admin), menu photos per item, multiple admin users or roles.
 
 ## A.5 Technical architecture (as built)
 
@@ -130,6 +135,11 @@ Google Sheet (system of record, admin UI)
   onStatusEdit → POST /api/notify (secret) → email + .ics + WhatsApp → "Guest notified"
   hourly sendReminders → /api/notify;  monthly archive
 Guest email link → /booking/[ref]?t=HMAC → POST /api/booking (get/change/cancel)
+Owner → /admin (ADMIN_PASSWORD → signed HttpOnly cookie)
+  Server Action saveContent: session check → sanitizeContent() → updatedAt check
+    → store: Upstash Redis | Apps Script getContent/saveContent (hidden tab) | .data/ file
+    → updateTag("site-content") + revalidatePath → guests see it at once
+Public pages + /api/reservations → getSiteContent() (cached; last good copy → data/ fallback)
 ```
 
 **Separation of concerns:**
@@ -148,7 +158,7 @@ Guest email link → /booking/[ref]?t=HMAC → POST /api/booking (get/change/can
 | Brevo (SMTP relay) | Backup email provider | Account, verified sender, SMTP login + SMTP key. Domain DKIM/DMARC recommended | Optional; off when unset |
 | Google Sheets + Apps Script | Storage, admin, triggers | Owner's Google account: paste script, set `SECRET`/`SITE_URL`, deploy web app, authorise scopes, install triggers | Booking still emailed with a "not saved" flag |
 | Cloudflare Turnstile | Bot check | Widget with hostnames; site key (public) + secret | Off when unset; fail-open if Cloudflare is down |
-| Upstash Redis | Shared rate limits | Free database (through Vercel Storage or upstash.com) | In-memory per instance |
+| Upstash Redis | Shared rate limits; optional store for the owner's menu and events | Free database (through Vercel Storage or upstash.com) | In-memory limits per instance; content goes to the sheet instead |
 | WhatsApp Cloud API (Meta) | Owner alerts, guest updates | Meta app, phone number ID, token, **approved templates** | Off when unset; email unaffected |
 | Google Maps embed | Map | None (keyless embed) | — |
 | Vercel | Hosting, CI deploy on push, Analytics | GitHub app limited to one repo; env vars; verification code | — |
@@ -213,7 +223,11 @@ Guest email link → /booking/[ref]?t=HMAC → POST /api/booking (get/change/can
 | Tests hit the rate limits | Limits working as intended | Use new test identities, or wait | Plan test identities; document how to reset limits |
 | Child pages had no OG image | Page-level `openGraph` replaces the root one | Pass images explicitly | Check the metadata on **every** route, not only the home page |
 | PNG OG image 1 MB | Heavy format | Use a JPEG of about 75 KB | Keep share images under 300 KB for WhatsApp |
-| **The live sheet secret is in the public repo right now** | A later commit (`6eaa0cd`) included the real `SECRET` in `scripts/google-apps-script.gs` | **Still open:** rotate the secret and restore the placeholder | Secret-scan before **every** commit, not just the first push |
+| The live sheet secret was committed to the public repo | A later commit (`6eaa0cd`) included the real `SECRET` in `scripts/google-apps-script.gs` | Placeholder restored in `4709494`. The old value stays in git history, so it must be rotated | Secret-scan before **every** commit, not just the first push |
+| Saving from `/admin` failed with "Apps Script is out of date" | The new `getContent` / `saveContent` actions weren't deployed, so the old script treated the call as a reservation | Paste the new script, publish a **New version**. The site detects the old reply and says so in the log | Every Apps Script change needs a manual paste + New version; make the website detect an outdated script |
+| Owner deleted part of the menu and couldn't undo it | The first Restore only covered a whole deleted section; the owner had deleted a category inside one | Restore now covers sections, categories and single items, sits at the top of the Menu tab, and has "Restore all" | Build undo for every level the owner can delete, and put it where they'll see it |
+| Testing admin locally would have written to the live sheet | `.env.local` points at the production sheet | `SITE_CONTENT_STORE=file` override for local testing | Give every store an override so tests never touch live data |
+| The guessed `*.vercel.app` address served someone else's app | The wanted subdomain was taken (see step 9) | Ask for the real production address before probing the live site | Never assume a production URL; read it from the host or ask |
 
 ## A.10 Development lessons, distilled into rules for Part B
 
@@ -231,6 +245,8 @@ Guest email link → /booking/[ref]?t=HMAC → POST /api/booking (get/change/can
 12. **Work in reviewable groups:** audit → prioritise → build one group → test → commit when asked.
 13. **Check for secrets before every commit.**
 14. **Teach and document for a non-expert owner:** README, `.env.example` comments, troubleshooting, and the client owning their own accounts.
+15. **If the owner will change content, give them a small, safe editor instead of asking a developer.** Password-protected, validated on the server, stored where the project already stores things, with undo (Discard, Restore) for every level they can delete.
+16. **An editor is part of the public attack surface.** Treat its input like any form: server-side session check, validation, rate limits.
 
 
 ---
@@ -324,7 +340,8 @@ BOOKING_OR_RESERVATION_REQUIREMENTS: "[...]"            # 🟡 Fields, party/slo
 ENQUIRY_FORM_REQUIREMENTS: "[...]"                      # 🟡 Fields and routing for contact / quote / lead forms
 ORDER_OR_ECOMMERCE_REQUIREMENTS: "[...]"                # 🟡 Catalogue size, cart, delivery, inventory
 PAYMENT_REQUIREMENTS:   "[none | deposits | full checkout | invoices]"  # 🟡 Provider preference (e.g. Razorpay, Stripe)
-ADMIN_REQUIREMENTS:     "[none | spreadsheet | dashboard | CMS]"        # 🟡 Who edits what, how often, technical skill
+ADMIN_REQUIREMENTS:     "[none | spreadsheet | owner-editor | dashboard | CMS]"  # 🟡 Who edits what (bookings? menu, prices,
+                                                        #    events?), how often, technical skill. See §7.3
 
 # ── Infrastructure ─────────────────────────────────────────
 EMAIL_PROVIDER:         "[gmail-smtp | brevo-smtp | brevo-api | apps-script-gmail | other | decide]"  # 🟡 🟢 see §8.1
@@ -475,17 +492,23 @@ Each phase ends with its deliverable. Don't skip the gates.
 app/ (or src/pages)          routes, layouts, metadata, route handlers
   api/<workflow>/route.ts    one handler per workflow: orchestration only
   <legal>/page.tsx           privacy-policy, terms-and-conditions, …
+  admin/page.tsx + actions.ts  owner editor (§7.3): password sign-in, Server Actions, noindex
   robots.ts  sitemap.ts  opengraph-image.tsx  icon.svg  not-found.tsx
 components/                  presentational + client components (PascalCase.tsx)
+  admin/                     owner editor UI (kept apart from the public components)
 data/                        ALL business content & settings (single source of truth)
   site.ts                    identity, contact, location, hours, policies, feature flags, online links
-  <catalogue>.ts             menu / services / products / team / events (typed)
+  <catalogue>.ts             menu / services / products / team / events (typed). If the owner edits them
+                             at /admin, these are only the starting content and the fallback
   translations.ts            UI strings per language (if multilingual)
 lib/                         logic & integrations, server-only where applicable
   validation.ts              shared client+server validation (pure, unit-tested)
   mailer.ts                  provider abstraction: primary + optional fallback
   email-templates.ts         HTML + text templates, all input escaped
   <store>.ts                 sheets.ts / db.ts: system-of-record client
+  content-store.ts           owner-edited content: storage backends + cached read + save (§7.3)
+  site-content.ts            pure validation/cleaning of owner edits (shared by editor and server)
+  admin-auth.ts              owner password check + signed HttpOnly session cookie
   rate-limit.ts  turnstile.ts  http.ts (sameOrigin, clientIp, json, safeEqual)
   format.ts  analytics.ts  ics.ts  tokens.ts  …
 scripts/                     test-email.mjs, test-<service>.mjs, google-apps-script.gs, seed/migrate
@@ -512,7 +535,8 @@ README.md  DECISIONS.md      setup, architecture, decisions, checklist
 | Owner wants to see and edit submissions with zero training; volume < ~50k rows/year; free | **Google Sheets via Apps Script web app** (§8.3). The sheet doubles as the admin panel (status dropdown, triggers). |
 | Relational data, auth, higher volume, reporting | Hosted Postgres (Neon, Supabase, Vercel Postgres) + ORM + a small admin UI or CMS |
 | Only notifications, nothing to keep | Email only. Still log failures. |
-| Content editing | Headless CMS, not a database |
+| Owner edits a small catalogue (menu, prices, events, opening notices) and nothing else | **Owner editor at `/admin`** (§7.3): content saved as one validated JSON document in a store the project already has (hidden sheet tab via Apps Script, Upstash Redis key, or a local file off-Vercel). No new account, no CMS |
+| Content editing by several people, rich text, images, drafts, roles | Headless CMS, not a database and not a bespoke admin |
 
 ### 5.4 Backend request pipeline (apply to every public POST endpoint)
 
@@ -607,7 +631,8 @@ For each feature: **include when** → **must-haves** → **acceptance criteria*
 | **Legal pages** | Always: Privacy + Terms (plus Cookies or Refund if relevant) | Written from the actual data flows and processors; 🔵 policies from config; "draft for owner review" banner flag; last-updated date | Every processor used is listed; no unsupported claims |
 | **Multilingual switch** | Audience needs it | UI strings in `translations.ts`, `lang` attribute updated, fonts for each script, choice remembered | Clearly state what's *not* translated (e.g. legal pages, emails) |
 | **Self-service links** | Bookings or orders that change | Signed (HMAC) links with reference + token, status-aware rules (e.g. no changes after start time) | Tampered tokens rejected; changes re-enter review |
-| **Admin** | Owner must manage submissions | Prefer a spreadsheet with status dropdowns + triggers, or a CMS, over a bespoke dashboard unless one is required | Owner can complete the whole loop without a developer |
+| **Admin: submissions** | Owner must manage bookings or enquiries | Prefer a spreadsheet with status dropdowns + triggers over a bespoke dashboard | Owner can complete the whole loop without a developer |
+| **Admin: content editor** | Owner changes menu items, prices, sections or events themselves | §7.3 | §7.3 |
 | **Demo banner** | Concept or portfolio builds | Slim, fixed, configurable; short mobile version; links to the author | Off with one flag |
 | **404 / error pages** | Always | Branded, with a way home | — |
 
@@ -634,6 +659,21 @@ For each feature: **include when** → **must-haves** → **acceptance criteria*
 ### 7.2 Contact / enquiry / lead form
 - **Fields** fit the purpose (name, email, phone optional, subject or service, message, consent). Use the same validation, abuse controls and honest states as bookings.
 - **Routing:** owner notification with `Reply-To` set to the enquirer, and an optional customer acknowledgement. Store enquiries if the client wants a record (sheet or CRM).
+
+### 7.3 Owner content editor at `/admin` (proven pattern)
+**Include when** the owner needs to add, change or remove catalogue content (menu items and prices, whole new sections such as *Desserts*, events) without a developer, and a CMS would be overkill.
+
+- **Access is the owner's only:** one `ADMIN_PASSWORD` env var (≥ 10 characters; admin switched off and explained on the page when it's missing or short). Constant-time comparison. On sign-in, set an **HttpOnly, SameSite=Strict, Secure** cookie scoped to `/admin`, holding `expiry.HMAC(expiry)` keyed from the password, so changing the password signs everyone out. 12-hour sessions. Rate-limit sign-in attempts per IP.
+- **Invisible to customers:** not linked anywhere, `robots: noindex` on the page, `Disallow: /admin` in robots.txt, left out of the sitemap. Being hard to find is not the protection: the password is.
+- **Every write re-checks the session on the server** (Server Actions or a route handler with the same-origin check). Never trust the page.
+- **Validate like any public input:** one pure `sanitizeContent()` used by the editor (instant feedback) and the server (truth). Length caps, price ranges, valid dates and times, no duplicate names in a group, control characters stripped, stable ids kept and new ones slugged and de-duplicated. Error messages name the exact place: *"Desserts → Cakes, item 2 needs a price."*
+- **Storage:** one JSON document `{ menu, events, updatedAt }` in the first available backend: Redis key → hidden sheet tab via Apps Script (`getContent` / `saveContent`; split across cells under 50k characters, each chunk prefixed with a character such as `~` so a chunk starting with `=` is never read as a formula) → local file (`.data/`, git-ignored) when not on a read-only host. An override env var (e.g. `SITE_CONTENT_STORE=file`) lets you test without touching live data.
+- **Starting content and fallback:** the typed `data/` files seed the editor until the first save. If storage can't be reached, public pages fall back to the last good copy, then to the `data/` files; the editor refuses to load rather than risk overwriting.
+- **Freshness:** public pages read through a cache tagged e.g. `site-content`; a save calls `updateTag` / `revalidatePath`, so guests see changes immediately.
+- **No lost work:** optimistic concurrency (send the `updatedAt` you started from; refuse a save if it changed elsewhere), unsaved-changes warning, **Discard**, confirm before deleting a section or category, and a **Restore** box that offers anything from the starting content that's missing (whole section, category or single items) at its original position, plus **Restore all**. Put it at the top, where the owner looks.
+- **Everything that depends on the content reads the stored copy:** the public menu and events, *and* server-side validation (e.g. a booking for an event checks the owner's current events, not the seed file).
+- **Owner-friendly UI:** mobile-first, plain words ("One price / Sizes / Market price", "Food type"), a sticky save bar showing the result ("Saved — guests see the new version now"), where changes are stored, and a "View site" link.
+- **Accept when:** a non-technical owner can add a new section with items and prices, edit and remove events, undo a mistaken delete, and see it live within seconds; a visitor without the password can't see or change anything; storage outages never blank the public menu.
 
 ---
 
@@ -724,7 +764,7 @@ For each workflow you implement, define: **trigger → required fields → backe
 **Script design** (`scripts/google-apps-script.gs`, versioned in the repo):
 
 - `doPost(e)`: parse JSON, then check the secret with a placeholder guard (`if (!SECRET || SECRET === PLACEHOLDER || body.secret !== SECRET) return unauthorized`). **Keep the real secret in Script Properties** (`PropertiesService.getScriptProperties().getProperty('SECRET')`), not in the code, so it can't leak when the file is committed.
-- Use `LockService.getScriptLock().waitLock(15000)` around writes. Dispatch on `body.action` (`add` / `get` / `change` / `cancel` / `mark…`). Always return `ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(JSON)`.
+- Use `LockService.getScriptLock().waitLock(15000)` around writes. Dispatch on `body.action` (`add` / `get` / `change` / `cancel` / `mark…`, plus `getContent` / `saveContent` when the sheet also stores owner-edited content, §7.3). Always return `ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(JSON)`.
 - `doGet()` returns a small "deployment works" message, for health checks.
 - **Write by column name:** map header text to an index, re-create missing required headers at the end, so the owner can reorder columns safely.
 - **Formula-injection guard:** prefix values starting with `= + - @` with `'`.
@@ -774,6 +814,7 @@ Add `script.send_mail` only if the script itself sends mail.
 | "not allowed on cells in typed columns" | Sheet converted into a Table | Table menu → **Revert to unformatted data** (not "Delete table"); keep formatting in try/catch |
 | `You do not have permission to call UrlFetchApp.fetch` | Scope not authorised | Add the manifest scopes, run a function to re-authorise, publish a new version |
 | Owner still gets "add manually" emails after fixing | Host env still old, or not redeployed | Update the env on the host for Production, then redeploy; search the logs for `[sheets]` |
+| New action fails with "missing reservation" (or similar) | The deployed script is an older version without that action, so it fell through to the default action | Paste the current script and publish a **New version**. Have the website detect this reply and log "Apps Script is out of date" |
 
 ### 8.4 Spam & abuse protection
 - **Honeypot** field: a visually hidden input named something plausible (e.g. `company`). If it's filled, return a fake success.
@@ -840,6 +881,7 @@ User action → Frontend validation → API (pipeline §5.4) → System of recor
 - [ ] Secrets compared in constant time; signed links use HMAC with a separate signing secret (rotating it invalidates old links: document that).
 - [ ] Security headers: CSP allowing only what's used (list each third party), HSTS, `X-Frame-Options: DENY` / `frame-ancestors 'none'`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`, `Permissions-Policy` (deny what isn't used), COOP; `poweredByHeader: false`.
 - [ ] CORS: no wildcard on endpoints that change data; same-origin by default.
+- [ ] Owner admin (if any, §7.3): password only in env, constant-time check, signed HttpOnly/SameSite=Strict/Secure session cookie scoped to the admin path, sign-in rate limit, session re-checked on every write, admin input validated like public input, page `noindex` and disallowed in robots.txt.
 - [ ] Dependencies: minimal, pinned via the lockfile, `npm audit` reviewed.
 - [ ] Logs: no secrets, minimal personal data; errors carry references.
 - [ ] Personal data: private storage (sheet shared only with the owner), local privacy law named (e.g. India DPDP Act, GDPR), retention configured.
@@ -1018,7 +1060,8 @@ User action → Frontend validation → API (pipeline §5.4) → System of recor
 | `REPOSITORY` | Private GitHub repository |
 | `LEGAL_PAGES` | Privacy Policy + Terms |
 | `ACCESSIBILITY_TARGET` | WCAG 2.2 AA |
-| `PAYMENT_REQUIREMENTS`, `ADMIN_REQUIREMENTS`, `ORDER_OR_ECOMMERCE_REQUIREMENTS` | None |
+| `ADMIN_REQUIREMENTS` | Bookings: the Google Sheet. Menu, prices and events: the `/admin` owner editor (§7.3) if the owner will change them, otherwise `data/` files |
+| `PAYMENT_REQUIREMENTS`, `ORDER_OR_ECOMMERCE_REQUIREMENTS` | None |
 
 **🔵 items** (address, hours, prices, policies, legal jurisdiction, testimonials) can be left blank too. Claude builds them configurable, marks them **"Owner review"**, and lists them in the delivery report. Fill them in later in `data/site.ts` (or the equivalent) without touching code.
 
@@ -1034,6 +1077,7 @@ Claude prepares the code and step-by-step instructions, but it will **not** crea
 | Google Sheets + Apps Script | Sheet in the client's account; script pasted; secret set; **web app deployed** (Me / Anyone); scopes authorised; triggers installed | `GOOGLE_SHEETS_WEBHOOK_URL`, `GOOGLE_SHEETS_SECRET` (+ `SITE_URL` in the script) |
 | Cloudflare Turnstile | Widget with **all hostnames**; site key + secret key | `NEXT_PUBLIC_TURNSTILE_SITE_KEY`, `TURNSTILE_SECRET_KEY` |
 | Upstash Redis | Free database (Vercel → Storage, or upstash.com) | `UPSTASH_REDIS_REST_URL/TOKEN` (or the automatic `KV_REST_API_*`) |
+| Owner admin (`/admin`) | A strong password (≥ 10 characters) chosen by the owner, shared privately; the updated Apps Script published as a New version | `ADMIN_PASSWORD` in `.env.local` and the host, then redeploy |
 | WhatsApp Cloud API | Meta app, phone number ID, token, **approved templates** | `WHATSAPP_*` |
 | Payments (Razorpay, Stripe…) | Merchant account + KYC, test keys first, then live; webhook secret | Provider-specific env |
 | Hosting (Vercel…) | Account; Git app restricted to **this repo only**; env vars pasted; verification codes | Host dashboard |

@@ -179,7 +179,7 @@ A language switch in the navigation translates the site's interface and remember
 
 ## ✦ The whole system
 
-Every part of the project and how they talk to each other. Solid arrows are the normal path; dotted arrows are the optional or backup paths (Brevo when Gmail fails, WhatsApp when it's set up).
+Every part of the project and how they talk to each other. Solid arrows are the normal path; dotted arrows are the optional or backup paths (Brevo when Gmail fails, WhatsApp when it's set up, Redis instead of the sheet for the menu).
 
 ```mermaid
 flowchart TB
@@ -188,6 +188,7 @@ flowchart TB
 
     subgraph Vercel["Vercel · Next.js site"]
         Pages["Pages<br/>home · menu · events · form · /booking/[ref]"]
+        Admin["/admin<br/>owner-only menu & events editor"]
         Res["/api/reservations<br/>10 checks → save → email"]
         Book["/api/booking<br/>signed change or cancel"]
         Notify["/api/notify<br/>status → email, WhatsApp"]
@@ -196,10 +197,10 @@ flowchart TB
 
     subgraph Checks["Spam checks"]
         Turnstile["Cloudflare Turnstile<br/>bot check"]
-        Redis["Upstash Redis<br/>rate-limit counters"]
+        Redis["Upstash Redis<br/>rate-limit counters · optional menu store"]
     end
 
-    Sheet[("Google Sheet + Apps Script<br/>one row per booking · Status · triggers")]
+    Sheet[("Google Sheet + Apps Script<br/>one row per booking · Status · triggers<br/>hidden tab: menu & events")]
 
     subgraph Delivery["Delivery"]
         Gmail["Gmail SMTP<br/>main sender"]
@@ -217,6 +218,10 @@ flowchart TB
     Res -->|save row, skip duplicates, check capacity| Sheet
     Book <-->|read · change · cancel| Sheet
     Owner -->|changes Status| Sheet
+    Owner -->|password · edits menu & events| Admin
+    Admin -->|save menu + events| Sheet
+    Admin -.->|or, if set up| Redis
+    Sheet -->|menu + events, cached| Pages
     Sheet -->|on edit · hourly reminder| Notify
     Res -->|send| Mailer
     Book -->|send| Mailer
@@ -231,7 +236,9 @@ flowchart TB
 
 The website is the only part that sends email or WhatsApp. The sheet never mails anyone itself: when the owner changes a Status, its script asks the site to send the message, so every template and calendar invite lives in one place.
 
-### The four journeys
+The owner has two places to work: the **Google Sheet** for bookings, and **`/admin`** for the menu and events. Guests only ever see the result.
+
+### The five journeys
 
 | Journey | Path through the system |
 |:--|:--|
@@ -239,6 +246,7 @@ The website is the only part that sends email or WhatsApp. The sheet never mails
 | **Owner confirms** | Owner sets **Status** to Confirmed, Declined or Cancelled → Apps Script on-edit trigger → `/api/notify` → guest email (+ calendar invite, + WhatsApp if opted in) → **Guest notified** column filled in |
 | **Day-before reminder** | Hourly Apps Script trigger (10 am–10 pm) → tomorrow's Confirmed rows → `/api/notify` → reminder email → **Reminder sent** marked |
 | **Guest changes or cancels** | Signed link in the email → `/booking/[reference]` → `/api/booking` → sheet updated (a change goes back to Pending) → guest and owner emailed |
+| **Owner edits the menu or events** | `/admin` → password → edit → **Save changes** → checked on the server → saved to the sheet's hidden *Website content* tab (or Redis) → home page, `/events` and the booking form show it straight away |
 
 <details>
 <summary><b>The 10 checks every booking passes in <code>/api/reservations</code></b></summary>
@@ -560,6 +568,20 @@ The owner manages the **menu** and **events** from a private page, `/admin`. It 
 
 Changes go live as soon as **Save changes** is pressed. If two people edit at once, the second save is refused instead of overwriting the first.
 
+**Undoing mistakes:** before saving, **Discard** throws away unsaved changes. After saving, if part of the original menu was deleted (a whole section, a category or single items), a **Restore** box at the top of the Menu tab puts it back with its original prices. Press **Save changes** afterwards.
+
+```mermaid
+flowchart LR
+    O(["Owner"]) -->|opens /admin| L{"Signed in?"}
+    L -->|no| P["Password<br/>ADMIN_PASSWORD"]
+    P -->|correct| E
+    L -->|yes| E["Menu & Events editor"]
+    E -->|Save changes| C["Server checks<br/>session · data · no newer save"]
+    C -->|ok| S[("Hidden sheet tab<br/>or Redis / local file")]
+    S --> G(["Guests see it now<br/>menu · /events · booking form"])
+    C -->|problem| M["Clear message<br/>nothing overwritten"]
+```
+
 **Setup**
 
 1. Set `ADMIN_PASSWORD` (at least 10 characters) in `.env.local` locally, and in Vercel → Project → Settings → Environment Variables. Redeploy.
@@ -629,6 +651,7 @@ app/
 ├── api/reservations/route.ts   Validate → Sheet → Emails
 ├── api/notify/route.ts         Called by the sheet: status emails & reminders
 ├── api/booking/route.ts        Guest change / cancel
+├── admin/                      /admin: owner sign-in + menu & events editor (Server Actions)
 ├── booking/[reference]/        "Manage your booking" page (signed link)
 ├── events/                     /events
 ├── privacy-policy/             /privacy-policy
@@ -638,13 +661,18 @@ app/
 components/                     Navbar · Hero · About · FeaturedItems · Menu · Events
                                 Reservation · Social · Contact · Footer · LegalPage
                                 ManageBooking · Language (EN / ગુ / हि switch)
+components/admin/               AdminLogin · AdminEditor (owner-only)
 data/
-├── menu.ts                     Menu, prices, diet labels (single source of truth)
-├── events.ts                   Events
+├── menu.ts                     Starting menu + types (the owner's saved menu replaces it)
+├── events.ts                   Starting events + upcoming-event logic
 ├── translations.ts             Gujarati & Hindi interface text
 └── site.ts                     Business settings
 lib/
 ├── validation.ts               Shared client/server validation
+├── content-store.ts            Owner's menu & events: Redis → sheet → file, cached
+├── site-content.ts             Checks and cleans everything saved from /admin
+├── admin-auth.ts               Owner password + signed session cookie
+├── menu-restore.ts             Finds and restores deleted parts of the starting menu
 ├── mailer.ts                   Gmail SMTP (server-only)
 ├── email-templates.ts          HTML + plain-text emails
 ├── notifications.ts            Guest updates: email + calendar + WhatsApp
@@ -658,7 +686,8 @@ scripts/
 ├── google-apps-script.gs       Paste into the Google Sheet
 ├── test-email.mjs              SMTP check
 └── test-sheet.mjs              Sheet check
-tests/                          Vitest: validation, reservations API, analytics
+tests/                          Vitest: validation, reservations API, analytics,
+                                admin sign-in, menu/event checks, restore
 .github/workflows/ci.yml        CI: typecheck, lint, test, build
 docs/screenshots/               Images used in this README
 ```
@@ -682,6 +711,7 @@ Deploy to [Vercel](https://vercel.com/new) (recommended for Next.js) or any Node
 - [x] Gmail SMTP connected and tested
 - [x] Google Sheets connected and tested
 - [x] Map coordinates · opening hours · cancellation, late-arrival and tax policy
+- [ ] `ADMIN_PASSWORD` set on Vercel, and the updated Apps Script published as a New version (for `/admin`)
 - [ ] Street address (optional): `location.exactAddress`
 - [ ] Hosting provider: `legal.hostingProvider` (Privacy Policy)
 - [ ] How long reservation records are kept: `legal.retentionPeriod` (Privacy Policy)
@@ -695,6 +725,7 @@ Deploy to [Vercel](https://vercel.com/new) (recommended for Next.js) or any Node
 - All input is re-validated on the server, and user text is HTML-escaped in emails and protected against spreadsheet formulas in the sheet.
 - Spam and abuse: a hidden honeypot field, optional [Cloudflare Turnstile](#spam-protection), and rate limits per IP (5 / 10 minutes) and per email and phone number (3 / day). The per-email limit stops anyone using the form to flood someone else's inbox. Limits are shared across servers when Upstash Redis is configured.
 - The API accepts only JSON requests from the site's own pages (Origin check), which blocks cross-site form posts.
+- Owner admin (`/admin`): the password lives only in the server's env and is compared in constant time. Signing in sets an HttpOnly, SameSite=Strict cookie (Secure in production) with a signed expiry, scoped to `/admin`; changing `ADMIN_PASSWORD` signs everyone out. Sign-in attempts are rate-limited, every save re-checks the session and validates the data, and the page is `noindex` and disallowed in `robots.txt`.
 - Security headers on every page: Content-Security-Policy, HSTS, `X-Frame-Options: DENY`, `X-Content-Type-Options`, `Referrer-Policy` and `Permissions-Policy` (see `next.config.ts`). If you add a third-party script or embed, add its domain to the CSP there.
 - If Gmail starts failing and emails go through the backup provider, the owner gets an alert email (at most once every 6 hours).
 - No analytics or advertising cookies.
